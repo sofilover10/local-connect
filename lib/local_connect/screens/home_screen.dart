@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app_scope.dart';
@@ -13,6 +14,63 @@ import 'chat_screen.dart';
 import 'diagnostics_screen.dart';
 import 'edit_name_dialog.dart';
 import 'wifi_direct_tab.dart';
+
+Future<void> _showAbout(BuildContext context) async {
+  final info = await PackageInfo.fromPlatform();
+  if (!context.mounted) return;
+  showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('LocalConnect 🇵🇸'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // شريط بألوان علم فلسطين — هوية بصرية بسيطة بلا حاجة لملف صورة.
+          // إطار خفيف حتى يظهر الشريط الأبيض على خلفية الحوار البيضاء.
+          Container(
+            decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300)),
+            child: const Row(
+              children: [
+                _FlagStripe(color: Colors.black),
+                _FlagStripe(color: Colors.white),
+                _FlagStripe(color: Colors.green),
+                _FlagStripe(color: Colors.red),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text('الإصدار ${info.version} (رقم البناء ${info.buildNumber})'),
+          const SizedBox(height: 16),
+          const Text('برمجة وتصميم وتطوير:'),
+          const Text('م. عبدالله حميد الصوفي', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          const Text('صُنع من أجل فلسطين 🇵🇸', style: TextStyle(fontWeight: FontWeight.w600)),
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('إغلاق')),
+      ],
+    ),
+  );
+}
+
+class _FlagStripe extends StatelessWidget {
+  const _FlagStripe({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        height: 6,
+        color: color,
+        margin: const EdgeInsets.only(left: 2),
+      ),
+    );
+  }
+}
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -43,6 +101,11 @@ class HomeScreen extends StatelessWidget {
             ),
           ),
           actions: [
+            IconButton(
+              tooltip: 'عن التطبيق',
+              onPressed: () => _showAbout(context),
+              icon: const Icon(Icons.info_outline),
+            ),
             IconButton(
               tooltip: 'الأرشيف',
               onPressed: () =>

@@ -9,6 +9,7 @@ class MainActivity : FlutterActivity() {
 
     private val wifiDirectHandler by lazy { WifiDirectHandler(applicationContext) }
     private val bluetoothHandler by lazy { BluetoothClassicHandler(applicationContext) }
+    private val ringtoneHandler by lazy { RingtoneHandler(applicationContext) }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -47,11 +48,14 @@ class MainActivity : FlutterActivity() {
             }
         )
         bluetoothHandler.start()
+
+        MethodChannel(messenger, "local_connect/ringtone").setMethodCallHandler(ringtoneHandler)
     }
 
     override fun onDestroy() {
         wifiDirectHandler.stop()
         bluetoothHandler.stop()
+        ringtoneHandler.stop()
         super.onDestroy()
     }
 }

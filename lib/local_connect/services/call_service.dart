@@ -6,6 +6,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
 
 import '../models/call_session.dart';
+import 'call_sound_service.dart';
 
 /// دالة إرسال إشارة مكالمة لرقم داخلي معيَّن — عادة [AppState.sendCallSignal]،
 /// يُمرَّرها الطرف المستدعي بدل استيراد AppState هنا مباشرة (لتفادي اعتماد
@@ -41,6 +42,8 @@ class CallService extends ChangeNotifier {
       {'urls': 'stun:stun.l.google.com:19302'},
     ],
   };
+
+  final CallSoundService _sound = CallSoundService();
 
   RTCPeerConnection? _pc;
   MediaStream? _localStream;
@@ -121,6 +124,7 @@ class CallService extends ChangeNotifier {
         return;
       }
       _startRingTimeout();
+      unawaited(_sound.playRingback());
     } catch (error) {
       await _endCall(reason: 'تعذّر بدء المكالمة: $error', notifyPeer: false);
     }
@@ -174,6 +178,7 @@ class CallService extends ChangeNotifier {
     );
     _pendingOfferSdp = sdp;
     _startRingTimeout();
+    unawaited(_sound.playRingtone());
     _safeNotify();
   }
 
@@ -185,6 +190,7 @@ class CallService extends ChangeNotifier {
     final sdp = _pendingOfferSdp;
     if (call == null || call.direction != CallDirection.incoming || sdp == null) return;
     _cancelRingTimeout();
+    unawaited(_sound.stopRingtone());
     call.state = CallState.connecting;
     _safeNotify();
 
@@ -236,6 +242,7 @@ class CallService extends ChangeNotifier {
     final sdp = payload['sdp'];
     if (call == null || pc == null || sdp is! String || payload['id'] != call.callId) return;
     _cancelRingTimeout();
+    unawaited(_sound.stopRingback());
     call.state = CallState.connecting;
     _safeNotify();
     await pc.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
@@ -398,6 +405,8 @@ class CallService extends ChangeNotifier {
   Future<void> _endCall({required String? reason, bool notifyPeer = true}) async {
     final call = currentCall;
     _cancelRingTimeout();
+    unawaited(_sound.stopRingtone());
+    unawaited(_sound.stopRingback());
     if (call != null && notifyPeer && call.state != CallState.ended) {
       unawaited(_sendSignal(call.peerInternalNumber, {
         'type': 'call_end',
