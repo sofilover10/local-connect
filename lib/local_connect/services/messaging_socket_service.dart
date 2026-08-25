@@ -44,7 +44,9 @@ class MessagingSocketService {
       }
     }
     _boundPort = _server!.port;
-    _server!.listen(_handleClient);
+    // onError إجباري هنا أيضًا: أي خطأ يصل عبر تيار خادم الاستقبال دون
+    // معالج صريح يهرب كخطأ Zone غير مُلتقَط بالكامل بدل أن يُسجَّل بوضوح.
+    _server!.listen(_handleClient, onError: (Object error) => lastError = 'خطأ في خادم الاستقبال: $error');
     lastError = null;
     return _boundPort!;
   }

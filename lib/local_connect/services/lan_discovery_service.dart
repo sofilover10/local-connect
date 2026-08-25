@@ -62,12 +62,20 @@ class LanDiscoveryService {
       return;
     }
 
-    _socket!.listen((event) {
-      if (event != RawSocketEvent.read) return;
-      final datagram = _socket!.receive();
-      if (datagram == null) return;
-      _handleIncoming(datagram, selfInternalNumber: identity.internalNumber);
-    });
+    _socket!.listen(
+      (event) {
+        if (event != RawSocketEvent.read) return;
+        final datagram = _socket!.receive();
+        if (datagram == null) return;
+        _handleIncoming(datagram, selfInternalNumber: identity.internalNumber);
+      },
+      // بدون هذا، أي خطأ يصل عبر تيار المقبس (لا عبر استثناء متزامن من
+      // send()) يهرب كخطأ Zone غير مُلتقَط بالكامل — يظهر في سجل الأخطاء
+      // العام المبهم بدل أن يُسجَّل هنا بوضوح كخطأ اكتشاف شبكة محدَّد.
+      onError: (Object error) {
+        lastBroadcastError = 'خطأ في مقبس الاكتشاف: $error';
+      },
+    );
 
     _broadcastTimer = Timer.periodic(broadcastInterval, (_) {
       unawaited(_broadcastPresence(identity: identity, tcpPort: tcpPort));
@@ -121,6 +129,10 @@ class LanDiscoveryService {
       final interfaces =
           await NetworkInterface.list(includeLoopback: false, type: InternetAddressType.IPv4);
       for (final interface in interfaces) {
+        // واجهات بيانات الجوال (rmnet/ccmni/wwan/pdp حسب الشريحة والمصنّع)
+        // لا تدعم البث أصلًا، وأندرويد يرفض إرسال أي حزمة بث عليها فعليًا
+        // (EPERM) — تجربتها فقط تنتج ضجيجًا في سجل الأخطاء بلا أي فائدة.
+        if (_isCellularInterface(interface.name)) continue;
         for (final address in interface.addresses) {
           final directedBroadcast = _subnetBroadcastAddress(address.address);
           if (directedBroadcast != null) targets.add(InternetAddress(directedBroadcast));
@@ -149,6 +161,12 @@ class LanDiscoveryService {
   /// يحسب عنوان بث موجَّه بافتراض قناع شبكي 24/ (الأكثر شيوعًا على شبكات
   /// المنازل ونقاط اتصال الجوال)، بأخذ أول ثلاث خانات من العنوان المحلي
   /// واستبدال الخانة الأخيرة بـ 255. مثال: 192.168.1.23 → 192.168.1.255.
+  static const _cellularInterfacePrefixes = ['rmnet', 'ccmni', 'wwan', 'pdp'];
+  bool _isCellularInterface(String name) {
+    final lower = name.toLowerCase();
+    return _cellularInterfacePrefixes.any(lower.startsWith);
+  }
+
   String? _subnetBroadcastAddress(String ipv4) {
     final parts = ipv4.split('.');
     if (parts.length != 4) return null;

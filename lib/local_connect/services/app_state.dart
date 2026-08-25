@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
@@ -19,6 +20,7 @@ import 'lan_discovery_service.dart';
 import 'local_store_service.dart';
 import 'messaging_socket_service.dart';
 import 'phone_contacts_service.dart';
+import 'update_check_service.dart';
 import 'wifi_direct_service.dart';
 
 /// الحالة المركزية للتطبيق: تربط الهوية، الاكتشاف على الشبكة، النقل عبر
@@ -50,8 +52,11 @@ class LocalConnectAppState extends ChangeNotifier {
   final BluetoothTransportService bluetoothTransport = BluetoothTransportService();
   late final BluetoothMessagingService bluetoothMessaging = BluetoothMessagingService(bluetoothTransport);
 
+  final UpdateCheckService _updateCheckService = UpdateCheckService();
+
   late DeviceIdentity identity;
   bool isReady = false;
+  UpdateInfo? availableUpdate;
 
   final List<Contact> contacts = [];
   final List<Conversation> conversations = [];
@@ -126,6 +131,24 @@ class LocalConnectAppState extends ChangeNotifier {
 
     isReady = true;
     _safeNotify();
+
+    unawaited(_checkForUpdate());
+  }
+
+  /// فحص غير حاجب لوجود إصدار أحدث على GitHub Releases. يفشل بصمت بلا
+  /// إنترنت (متوقَّع وطبيعي لتطبيق مصمَّم للعمل أوفلاين بالكامل).
+  Future<void> _checkForUpdate() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final buildNumber = int.tryParse(info.buildNumber);
+      if (buildNumber == null) return;
+      final update = await _updateCheckService.checkForUpdate(currentBuildNumber: buildNumber);
+      if (update == null) return;
+      availableUpdate = update;
+      _safeNotify();
+    } catch (_) {
+      // لا شيء — الفحص اختياري تمامًا ولا يجب أن يؤثر على عمل التطبيق.
+    }
   }
 
   /// يطلب صلاحيات البلوتوث اللازمة للاكتشاف/الاتصال. يختلف الاسم المطلوب

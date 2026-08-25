@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../app_scope.dart';
 import '../models/conversation.dart';
@@ -72,12 +73,19 @@ class HomeScreen extends StatelessWidget {
         ),
         body: AnimatedBuilder(
           animation: appState,
-          builder: (context, _) => TabBarView(
+          builder: (context, _) => Column(
             children: [
-              _ConversationsTab(appState: appState),
-              _NearbyDevicesTab(appState: appState),
-              BluetoothTab(appState: appState),
-              WifiDirectTab(appState: appState),
+              if (appState.availableUpdate != null) _UpdateBanner(appState: appState),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    _ConversationsTab(appState: appState),
+                    _NearbyDevicesTab(appState: appState),
+                    BluetoothTab(appState: appState),
+                    WifiDirectTab(appState: appState),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
@@ -144,6 +152,35 @@ class _ConversationsTab extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _UpdateBanner extends StatelessWidget {
+  const _UpdateBanner({required this.appState});
+
+  final LocalConnectAppState appState;
+
+  @override
+  Widget build(BuildContext context) {
+    final update = appState.availableUpdate!;
+    return Container(
+      width: double.infinity,
+      color: Colors.teal.shade50,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          const Icon(Icons.system_update, color: Colors.teal),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text('يتوفر إصدار جديد (${update.versionTag})', style: const TextStyle(color: Colors.teal)),
+          ),
+          TextButton(
+            onPressed: () => launchUrl(Uri.parse(update.downloadUrl), mode: LaunchMode.externalApplication),
+            child: const Text('تحميل'),
+          ),
+        ],
+      ),
     );
   }
 }
