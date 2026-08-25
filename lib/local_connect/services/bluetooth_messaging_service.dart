@@ -77,7 +77,8 @@ class BluetoothMessagingService {
       return;
     }
 
-    if (map['type'] == 'message') {
+    const knownTypes = {'message', 'edit_message', 'delete_message'};
+    if (knownTypes.contains(map['type'])) {
       _incomingController.add(map);
       final ackLine = '${jsonEncode({'type': 'ack', 'id': map['id']})}\n';
       unawaited(_transport.send(address, Uint8List.fromList(utf8.encode(ackLine))));

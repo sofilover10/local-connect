@@ -24,6 +24,9 @@ class _ChatScreenState extends State<ChatScreen> {
   final _recorder = AudioRecorder();
   bool _isRecording = false;
 
+  /// معرّف الرسالة قيد التعديل حاليًا، أو null إن كنا نكتب رسالة جديدة.
+  String? _editingMessageId;
+
   @override
   void dispose() {
     _controller.dispose();
@@ -47,9 +50,53 @@ class _ChatScreenState extends State<ChatScreen> {
   void _send(BuildContext context) {
     final text = _controller.text;
     if (text.trim().isEmpty) return;
-    AppScope.of(context).sendMessage(conversationId: widget.conversation.id, text: text);
+
+    final editingId = _editingMessageId;
+    if (editingId != null) {
+      AppScope.of(context)
+          .editMessage(conversationId: widget.conversation.id, messageId: editingId, newText: text);
+      setState(() => _editingMessageId = null);
+    } else {
+      AppScope.of(context).sendMessage(conversationId: widget.conversation.id, text: text);
+    }
     _controller.clear();
     _scrollToBottom();
+  }
+
+  void _startEdit(ChatMessage message) {
+    setState(() {
+      _editingMessageId = message.id;
+      _controller.text = message.text;
+    });
+  }
+
+  void _cancelEdit() {
+    setState(() {
+      _editingMessageId = null;
+      _controller.clear();
+    });
+  }
+
+  Future<void> _deleteForMe(BuildContext context, ChatMessage message) async {
+    await AppScope.of(context)
+        .deleteMessage(conversationId: widget.conversation.id, messageId: message.id, forEveryone: false);
+  }
+
+  Future<void> _deleteForEveryone(BuildContext context, ChatMessage message) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('حذف للجميع؟'),
+        content: const Text('ستُحذَف هذه الرسالة لدى الطرف الآخر أيضًا إن كان بالإمكان الوصول إليه.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('حذف')),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    await AppScope.of(context)
+        .deleteMessage(conversationId: widget.conversation.id, messageId: message.id, forEveryone: true);
   }
 
   Future<void> _pickAndSendFile(BuildContext context) async {
@@ -105,6 +152,15 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Future<void> _toggleArchive(BuildContext context) async {
+    final newValue = !widget.conversation.isArchived;
+    await AppScope.of(context).setConversationArchived(widget.conversation.id, newValue);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(newValue ? 'أُرشِفَت المحادثة' : 'أُلغِيَت أرشفة المحادثة')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final appState = AppScope.of(context);
@@ -144,6 +200,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     onTap: () => _saveToPhoneContacts(context),
                     child: const Text('حفظ في جهات اتصال الهاتف'),
                   ),
+                  PopupMenuItem(
+                    onTap: () => _toggleArchive(context),
+                    child: Text(widget.conversation.isArchived ? 'إلغاء أرشفة المحادثة' : 'أرشفة المحادثة'),
+                  ),
                 ],
               ),
             ],
@@ -157,16 +217,47 @@ class _ChatScreenState extends State<ChatScreen> {
                         controller: _scrollController,
                         padding: const EdgeInsets.symmetric(vertical: 8),
                         itemCount: messages.length,
-                        itemBuilder: (context, index) => MessageBubble(message: messages[index]),
+                        itemBuilder: (context, index) {
+                          final message = messages[index];
+                          return MessageBubble(
+                            message: message,
+                            onEdit: message.outgoing && message.kind == MessageKind.text
+                                ? () => _startEdit(message)
+                                : null,
+                            onDeleteForMe: () => _deleteForMe(context, message),
+                            onDeleteForEveryone:
+                                message.outgoing ? () => _deleteForEveryone(context, message) : null,
+                          );
+                        },
                       ),
               ),
+              if (_editingMessageId != null)
+                Container(
+                  width: double.infinity,
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.edit, size: 16),
+                      const SizedBox(width: 6),
+                      const Expanded(child: Text('تعديل رسالة', style: TextStyle(fontSize: 12))),
+                      IconButton(
+                        onPressed: _cancelEdit,
+                        icon: const Icon(Icons.close, size: 18),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
+                  ),
+                ),
               SafeArea(
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
                   child: Row(
                     children: [
                       IconButton(
-                        onPressed: _isRecording ? null : () => _pickAndSendFile(context),
+                        onPressed:
+                            (_isRecording || _editingMessageId != null) ? null : () => _pickAndSendFile(context),
                         icon: const Icon(Icons.attach_file),
                         tooltip: 'إرسال ملف',
                       ),
@@ -186,14 +277,14 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                       const SizedBox(width: 8),
                       IconButton(
-                        onPressed: () => _toggleVoiceRecording(context),
+                        onPressed: _editingMessageId != null ? null : () => _toggleVoiceRecording(context),
                         icon: Icon(_isRecording ? Icons.stop_circle : Icons.mic),
                         color: _isRecording ? Colors.red : null,
                         tooltip: _isRecording ? 'إيقاف وإرسال الرسالة الصوتية' : 'تسجيل رسالة صوتية',
                       ),
                       IconButton.filled(
                         onPressed: _isRecording ? null : () => _send(context),
-                        icon: const Icon(Icons.send),
+                        icon: Icon(_editingMessageId != null ? Icons.check : Icons.send),
                       ),
                     ],
                   ),

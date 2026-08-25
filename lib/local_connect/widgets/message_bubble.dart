@@ -6,9 +6,61 @@ import 'file_message_tile.dart';
 import 'voice_message_player.dart';
 
 class MessageBubble extends StatelessWidget {
-  const MessageBubble({super.key, required this.message});
+  const MessageBubble({
+    super.key,
+    required this.message,
+    this.onEdit,
+    this.onDeleteForMe,
+    this.onDeleteForEveryone,
+  });
 
   final ChatMessage message;
+  final VoidCallback? onEdit;
+  final VoidCallback? onDeleteForMe;
+  final VoidCallback? onDeleteForEveryone;
+
+  bool get _hasActions => onEdit != null || onDeleteForMe != null || onDeleteForEveryone != null;
+
+  Future<void> _showActions(BuildContext context) async {
+    final canEdit = onEdit != null && message.outgoing && message.kind == MessageKind.text;
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (canEdit)
+              ListTile(
+                leading: const Icon(Icons.edit),
+                title: const Text('تعديل'),
+                onTap: () {
+                  Navigator.pop(context);
+                  onEdit!();
+                },
+              ),
+            if (onDeleteForMe != null)
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: const Text('حذف لديّ'),
+                onTap: () {
+                  Navigator.pop(context);
+                  onDeleteForMe!();
+                },
+              ),
+            if (onDeleteForEveryone != null && message.outgoing)
+              ListTile(
+                leading: const Icon(Icons.delete_forever, color: Colors.red),
+                title: const Text('حذف للجميع', style: TextStyle(color: Colors.red)),
+                onTap: () {
+                  Navigator.pop(context);
+                  onDeleteForEveryone!();
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -19,40 +71,63 @@ class MessageBubble extends StatelessWidget {
 
     return Align(
       alignment: message.outgoing ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-        decoration: BoxDecoration(
-          color: bubbleColor,
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildContent(textColor),
-            const SizedBox(height: 4),
-            Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  DateFormat.Hm().format(message.sentAt),
-                  style: TextStyle(fontSize: 11, color: textColor.withValues(alpha: 0.7)),
-                ),
-                if (message.outgoing) ...[
-                  const SizedBox(width: 4),
-                  Icon(_statusIcon(message.status), size: 14, color: textColor.withValues(alpha: 0.8)),
+      child: GestureDetector(
+        onLongPress: (_hasActions && !message.isDeleted) ? () => _showActions(context) : null,
+        child: Container(
+          margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+          decoration: BoxDecoration(
+            color: bubbleColor,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildContent(textColor),
+              const SizedBox(height: 4),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (message.editedAt != null && !message.isDeleted) ...[
+                    Text(
+                      'تم التعديل · ',
+                      style: TextStyle(fontSize: 11, color: textColor.withValues(alpha: 0.7)),
+                    ),
+                  ],
+                  Text(
+                    DateFormat.Hm().format(message.sentAt),
+                    style: TextStyle(fontSize: 11, color: textColor.withValues(alpha: 0.7)),
+                  ),
+                  if (message.outgoing) ...[
+                    const SizedBox(width: 4),
+                    Icon(_statusIcon(message.status), size: 14, color: textColor.withValues(alpha: 0.8)),
+                  ],
                 ],
-              ],
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildContent(Color textColor) {
+    if (message.isDeleted) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.block, size: 16, color: textColor.withValues(alpha: 0.7)),
+          const SizedBox(width: 6),
+          Text(
+            'تم حذف هذه الرسالة',
+            style: TextStyle(color: textColor.withValues(alpha: 0.7), fontStyle: FontStyle.italic),
+          ),
+        ],
+      );
+    }
+
     switch (message.kind) {
       case MessageKind.text:
         return Text(message.text, style: TextStyle(color: textColor));

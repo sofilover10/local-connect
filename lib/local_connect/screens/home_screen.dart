@@ -3,11 +3,11 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app_scope.dart';
-import '../models/conversation.dart';
 import '../models/peer_info.dart';
 import '../services/app_state.dart';
 import '../widgets/status_dot.dart';
 import 'add_contact_dialog.dart';
+import 'archived_conversations_screen.dart';
 import 'bluetooth_tab.dart';
 import 'chat_screen.dart';
 import 'diagnostics_screen.dart';
@@ -43,6 +43,12 @@ class HomeScreen extends StatelessWidget {
             ),
           ),
           actions: [
+            IconButton(
+              tooltip: 'الأرشيف',
+              onPressed: () =>
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const ArchivedConversationsScreen())),
+              icon: const Icon(Icons.archive_outlined),
+            ),
             AnimatedBuilder(
               animation: appState,
               builder: (context, _) {
@@ -105,7 +111,7 @@ class _ConversationsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final conversations = List<Conversation>.from(appState.conversations)
+    final conversations = appState.conversations.where((c) => !c.isArchived).toList()
       ..sort((a, b) {
         final aTime = a.lastMessageAt;
         final bTime = b.lastMessageAt;

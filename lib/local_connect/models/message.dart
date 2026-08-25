@@ -16,14 +16,17 @@ class ChatMessage {
     this.attachmentMimeType,
     this.attachmentSizeBytes,
     this.attachmentLocalPath,
+    this.editedAt,
+    this.isDeleted = false,
   });
 
   final String id;
   final String conversationId;
   final String senderInternalNumber;
 
-  /// النص إن كانت رسالة نصية، أو تعليق/اسم قصير إن كانت مرفقًا.
-  final String text;
+  /// النص إن كانت رسالة نصية، أو تعليق/اسم قصير إن كانت مرفقًا. قابل
+  /// للتعديل لدعم تحرير الرسائل النصية الصادرة بعد إرسالها.
+  String text;
   final DateTime sentAt;
   MessageStatus status;
 
@@ -41,6 +44,14 @@ class ChatMessage {
   /// كان الملف الأصلي المُرسَل أو نسخة محفوظة محليًا من مرفق وارد).
   String? attachmentLocalPath;
 
+  /// وقت آخر تعديل على نص الرسالة، أو null إن لم تُعدَّل قط.
+  DateTime? editedAt;
+
+  /// حذف "للجميع" — تبقى الرسالة في مكانها بالمحادثة كعنصر نائب فارغ بدل
+  /// حذفها من القائمة، بنفس أسلوب واتساب. حذف "لي فقط" يُزيل السجل محليًا
+  /// بالكامل بدل استخدام هذا العلم.
+  bool isDeleted;
+
   Map<String, dynamic> toMap() => {
         'id': id,
         'conversationId': conversationId,
@@ -54,6 +65,8 @@ class ChatMessage {
         'attachmentMimeType': attachmentMimeType,
         'attachmentSizeBytes': attachmentSizeBytes,
         'attachmentLocalPath': attachmentLocalPath,
+        'editedAt': editedAt?.toIso8601String(),
+        'isDeleted': isDeleted,
       };
 
   factory ChatMessage.fromMap(Map<String, dynamic> map) => ChatMessage(
@@ -69,6 +82,8 @@ class ChatMessage {
         attachmentMimeType: map['attachmentMimeType'] as String?,
         attachmentSizeBytes: map['attachmentSizeBytes'] as int?,
         attachmentLocalPath: map['attachmentLocalPath'] as String?,
+        editedAt: map['editedAt'] == null ? null : DateTime.parse(map['editedAt'] as String),
+        isDeleted: map['isDeleted'] as bool? ?? false,
       );
 
   /// الحمولة المُرسَلة فعليًا عبر مقبس TCP بين الجهازين. المرفقات تُرسَل

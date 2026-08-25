@@ -90,7 +90,11 @@ class MessagingSocketService {
     } catch (_) {
       return;
     }
-    if (map['type'] == 'message') {
+    // 'message' لرسالة جديدة، 'edit_message'/'delete_message' لعمليات
+    // تحرير/حذف على رسالة موجودة مسبقًا — الثلاثة تُقَرّ بنفس الآلية
+    // (ack بمعرّف الحمولة) وتُمرَّر لـAppState الذي يفرّق بينها فعليًا.
+    const knownTypes = {'message', 'edit_message', 'delete_message'};
+    if (knownTypes.contains(map['type'])) {
       _incomingController.add(map);
       final ack = jsonEncode({'type': 'ack', 'id': map['id']});
       client.write('$ack\n');

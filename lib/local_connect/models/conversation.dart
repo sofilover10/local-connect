@@ -9,6 +9,7 @@ class Conversation {
     required this.peerDisplayName,
     this.lastMessagePreview,
     this.lastMessageAt,
+    this.isArchived = false,
   });
 
   final String id;
@@ -16,6 +17,10 @@ class Conversation {
   final String peerDisplayName;
   String? lastMessagePreview;
   DateTime? lastMessageAt;
+
+  /// الأرشفة محلية بحتة (كل جهاز يقرّرها بنفسه) — لا حاجة لإخبار الطرف
+  /// الآخر أو أي مزامنة عبر الشبكة.
+  bool isArchived;
 
   static String idFor(String internalNumberA, String internalNumberB) {
     final pair = [internalNumberA, internalNumberB]..sort();
@@ -28,6 +33,7 @@ class Conversation {
         'peerDisplayName': peerDisplayName,
         'lastMessagePreview': lastMessagePreview,
         'lastMessageAt': lastMessageAt?.toIso8601String(),
+        'isArchived': isArchived,
       };
 
   factory Conversation.fromMap(Map<String, dynamic> map) => Conversation(
@@ -38,5 +44,6 @@ class Conversation {
         lastMessageAt: map['lastMessageAt'] == null
             ? null
             : DateTime.parse(map['lastMessageAt'] as String),
+        isArchived: map['isArchived'] as bool? ?? false,
       );
 }

@@ -480,6 +480,85 @@ class LocalConnectAppState extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------------
+  // تعديل/حذف الرسائل وأرشفة المحادثات
+  // ---------------------------------------------------------------------
+
+  /// يعدّل نص رسالة نصية صادرة أرسلتَها أنت بنفسك. يُحدَّث النسخة المحلية
+  /// فورًا، ويُرسَل تعديل للطرف الآخر كمحاولة واحدة أفضل-جهد (بلا قائمة
+  /// انتظار دائمة كالرسائل نفسها) — إن كان غير ظاهر الآن، سيبقى نصه
+  /// القديم لديه إلى أن تُرسِل له رسالة أخرى تنجح لاحقًا.
+  Future<void> editMessage({
+    required String conversationId,
+    required String messageId,
+    required String newText,
+  }) async {
+    final trimmed = newText.trim();
+    if (trimmed.isEmpty) return;
+
+    final list = _messagesByConversation[conversationId];
+    final index = list?.indexWhere((m) => m.id == messageId) ?? -1;
+    if (list == null || index == -1) return;
+
+    final message = list[index];
+    if (!message.outgoing || message.kind != MessageKind.text) return;
+
+    message.text = trimmed;
+    message.editedAt = DateTime.now();
+    await _persistMessage(message);
+    _updateConversationPreview(conversationId, message);
+    _safeNotify();
+
+    final conversation = conversations.firstWhere((c) => c.id == conversationId);
+    unawaited(_deliverViaAnyTransport(conversation, {
+      'type': 'edit_message',
+      'id': message.id,
+      'senderInternalNumber': identity.internalNumber,
+      'text': trimmed,
+      'editedAt': message.editedAt!.toIso8601String(),
+    }));
+  }
+
+  /// حذف "لي فقط": يُزيل الرسالة محليًا نهائيًا بلا أي إخطار للطرف الآخر.
+  /// حذف "للجميع": يُبقيها عنصرًا نائبًا فارغًا محليًا (بنفس أسلوب واتساب)،
+  /// ويُرسِل طلب حذف للطرف الآخر — لا يجوز إلا على رسالة أرسلتَها أنت.
+  Future<void> deleteMessage({
+    required String conversationId,
+    required String messageId,
+    required bool forEveryone,
+  }) async {
+    final list = _messagesByConversation[conversationId];
+    final index = list?.indexWhere((m) => m.id == messageId) ?? -1;
+    if (list == null || index == -1) return;
+
+    final message = list[index];
+
+    if (forEveryone) {
+      if (!message.outgoing) return;
+      message.isDeleted = true;
+      await _persistMessage(message);
+      final conversation = conversations.firstWhere((c) => c.id == conversationId);
+      unawaited(_deliverViaAnyTransport(conversation, {
+        'type': 'delete_message',
+        'id': message.id,
+        'senderInternalNumber': identity.internalNumber,
+      }));
+    } else {
+      list.removeAt(index);
+      final box = await _store.messagesBoxFor(conversationId);
+      await box.delete(messageId);
+    }
+    _safeNotify();
+  }
+
+  /// الأرشفة محلية بحتة — لا تُرسَل للطرف الآخر ولا تؤثر على محادثته هو.
+  Future<void> setConversationArchived(String conversationId, bool archived) async {
+    final conversation = conversations.firstWhere((c) => c.id == conversationId);
+    conversation.isArchived = archived;
+    await _store.conversationsBox.put(conversationId, _store.encode(conversation.toMap()));
+    _safeNotify();
+  }
+
+  // ---------------------------------------------------------------------
   // استقبال الرسائل الواردة
   // ---------------------------------------------------------------------
 
@@ -488,13 +567,8 @@ class LocalConnectAppState extends ChangeNotifier {
   /// وتُسجَّل في سجل الأخطاء بدل أن تُسقِط معالجة الرسائل بالكامل.
   void _handleIncomingWire(Map<String, dynamic> payload) {
     try {
-      final id = payload['id'];
       final senderInternalNumber = payload['senderInternalNumber'];
-      final text = payload['text'];
-      if (id is! String ||
-          senderInternalNumber is! String ||
-          text is! String ||
-          !_isSafeIdentifier(senderInternalNumber)) {
+      if (senderInternalNumber is! String || !_isSafeIdentifier(senderInternalNumber)) {
         // senderInternalNumber يُستخدم لاحقًا لبناء معرّف المحادثة، الذي
         // يُستخدم بدوره كاسم صندوق تخزين (Hive) واسم مجلد مرفقات على
         // القرص — رفض أي قيمة تحتوي أحرفًا خارج نطاق آمن (بدل محاولة
@@ -510,28 +584,108 @@ class LocalConnectAppState extends ChangeNotifier {
       // بحقنه بقيمة تعسفية تُستخدَم لاحقًا كاسم صندوق تخزين ومجلد ملفات.
       final conversationId = Conversation.idFor(identity.internalNumber, senderInternalNumber);
 
-      final kind = MessageKind.values.byName((payload['kind'] as String?) ?? 'text');
-      final attachmentFileName = payload['attachmentFileName'] as String?;
-      final base64Data = payload['data'] as String?;
-
-      final message = ChatMessage(
-        id: id,
-        conversationId: conversationId,
-        senderInternalNumber: senderInternalNumber,
-        text: text,
-        sentAt: DateTime.tryParse(payload['sentAt'] as String? ?? '') ?? DateTime.now(),
-        status: MessageStatus.delivered,
-        outgoing: false,
-        kind: kind,
-        attachmentFileName: attachmentFileName,
-        attachmentMimeType: payload['attachmentMimeType'] as String?,
-        attachmentSizeBytes: payload['attachmentSizeBytes'] as int?,
-      );
-
-      _handleValidIncomingMessage(conversationId, senderInternalNumber, message, base64Data);
+      switch (payload['type']) {
+        case 'edit_message':
+          _handleIncomingEdit(conversationId, senderInternalNumber, payload);
+          return;
+        case 'delete_message':
+          _handleIncomingDelete(conversationId, senderInternalNumber, payload);
+          return;
+        default:
+          _handleIncomingNewMessage(conversationId, senderInternalNumber, payload);
+      }
     } catch (error) {
       recordError('معالجة رسالة واردة', error);
     }
+  }
+
+  void _handleIncomingNewMessage(
+    String conversationId,
+    String senderInternalNumber,
+    Map<String, dynamic> payload,
+  ) {
+    final id = payload['id'];
+    final text = payload['text'];
+    if (id is! String || text is! String) {
+      recordError('رسالة واردة', 'حمولة غير صالحة من الشبكة تم تجاهلها');
+      return;
+    }
+
+    final kind = MessageKind.values.byName((payload['kind'] as String?) ?? 'text');
+    final base64Data = payload['data'] as String?;
+
+    final message = ChatMessage(
+      id: id,
+      conversationId: conversationId,
+      senderInternalNumber: senderInternalNumber,
+      text: text,
+      sentAt: DateTime.tryParse(payload['sentAt'] as String? ?? '') ?? DateTime.now(),
+      status: MessageStatus.delivered,
+      outgoing: false,
+      kind: kind,
+      attachmentFileName: payload['attachmentFileName'] as String?,
+      attachmentMimeType: payload['attachmentMimeType'] as String?,
+      attachmentSizeBytes: payload['attachmentSizeBytes'] as int?,
+    );
+
+    _handleValidIncomingMessage(conversationId, senderInternalNumber, message, base64Data);
+  }
+
+  /// يتحقق أن senderInternalNumber المرافق لطلب التعديل يطابق ما هو مخزَّن
+  /// فعليًا مع الرسالة الأصلية، فيمنع على الأقل حالة عدم الاتساق (تعديل/حذف
+  /// حمولة تشير خطأً أو عمدًا لرسالة ذات مُرسِل مختلف). هذا **ليس** إثباتًا
+  /// حقيقيًا للهوية: البروتوكول كله لا يحتوي أي تحقق تشفيري يربط اتصال TCP
+  /// بجهاز بعينه، فأي جهاز على الشبكة يقدر أصلًا يدّعي senderInternalNumber
+  /// أي رقم يريده (بما فيها الرقم الصحيح نفسه) — تمامًا كحال الرسائل العادية.
+  /// هذا التطبيق مصمَّم أصلًا كشبكة ثقة محلية (LAN)، وليس مقاومًا لأطراف
+  /// خبيثة فعليًا؛ تحقق هوية حقيقي يحتاج بنية تشفيرية (مفتاح لكل جهاز
+  /// وتوقيع الرسائل) خارج نطاق هذه النسخة.
+  void _handleIncomingEdit(
+    String conversationId,
+    String senderInternalNumber,
+    Map<String, dynamic> payload,
+  ) {
+    final id = payload['id'];
+    final newText = payload['text'];
+    if (id is! String || newText is! String) return;
+
+    final list = _messagesByConversation[conversationId];
+    final index = list?.indexWhere((m) => m.id == id) ?? -1;
+    if (list == null || index == -1) return;
+
+    final message = list[index];
+    if (message.senderInternalNumber != senderInternalNumber) {
+      recordError('تعديل رسالة واردة', 'محاولة تعديل رسالة من مرسِل مختلف، تم تجاهلها');
+      return;
+    }
+
+    message.text = newText;
+    message.editedAt = DateTime.tryParse(payload['editedAt'] as String? ?? '') ?? DateTime.now();
+    unawaited(_persistMessage(message));
+    _safeNotify();
+  }
+
+  void _handleIncomingDelete(
+    String conversationId,
+    String senderInternalNumber,
+    Map<String, dynamic> payload,
+  ) {
+    final id = payload['id'];
+    if (id is! String) return;
+
+    final list = _messagesByConversation[conversationId];
+    final index = list?.indexWhere((m) => m.id == id) ?? -1;
+    if (list == null || index == -1) return;
+
+    final message = list[index];
+    if (message.senderInternalNumber != senderInternalNumber) {
+      recordError('حذف رسالة واردة', 'محاولة حذف رسالة من مرسِل مختلف، تم تجاهلها');
+      return;
+    }
+
+    message.isDeleted = true;
+    unawaited(_persistMessage(message));
+    _safeNotify();
   }
 
   void _handleValidIncomingMessage(
