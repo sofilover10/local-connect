@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -78,6 +80,9 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final appState = AppScope.of(context);
+    // Activity متصلة فعليًا هنا (خلافًا لحظة init() المبكرة عند بدء
+    // العملية)، فحوار صلاحية الإشعار قابل للعرض فعليًا الآن.
+    unawaited(appState.ensureNotificationPermission());
 
     return DefaultTabController(
       length: 4,

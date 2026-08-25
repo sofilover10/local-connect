@@ -174,6 +174,22 @@ class LocalConnectAppState extends ChangeNotifier {
     }
   }
 
+  /// يطلب صلاحية إظهار الإشعار الثابت لخدمة الخلفية (إلزامية على أندرويد
+  /// 13+ عبر POST_NOTIFICATIONS، وإلا لا يظهر الإشعار رغم أن الخدمة نفسها
+  /// تبقى تعمل). تُستدعى مرة واحدة فقط من أول شاشة رئيسية تُبنى، حيث
+  /// تكون شاشة (Activity) فعليًا متصلة ليمكن عرض حوار النظام.
+  bool _notificationPermissionRequested = false;
+  Future<void> ensureNotificationPermission() async {
+    if (_notificationPermissionRequested) return;
+    _notificationPermissionRequested = true;
+    try {
+      await Permission.notification.request();
+    } catch (_) {
+      // منصّات/بيئات بلا معالج فعلي لهذه القناة (اختبارات الودجت مثلًا) —
+      // لا يجب أن يُسقِط ذلك الشاشة الرئيسية بالكامل.
+    }
+  }
+
   /// يطلب صلاحيات البلوتوث اللازمة للاكتشاف/الاتصال. يختلف الاسم المطلوب
   /// حسب إصدار أندرويد (permission_handler يتعامل مع ذلك داخليًا).
   Future<bool> requestBluetoothPermissions() async {
