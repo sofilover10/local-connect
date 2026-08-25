@@ -150,6 +150,9 @@ class MessageBubble extends StatelessWidget {
       case MessageStatus.queued:
         return Icons.schedule;
       case MessageStatus.sent:
+        // وصلت للمُرحِّل المركزي فقط، لم يستلمها الطرف الآخر فعليًا بعد —
+        // صح واحدة (بخلاف صحّين لـdelivered) تُميّز هذا الفرق للمستخدم.
+        return Icons.done;
       case MessageStatus.delivered:
         return Icons.done_all;
       case MessageStatus.failed:

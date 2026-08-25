@@ -20,6 +20,7 @@ import 'lan_discovery_service.dart';
 import 'local_store_service.dart';
 import 'messaging_socket_service.dart';
 import 'phone_contacts_service.dart';
+import 'relay_service.dart';
 import 'update_check_service.dart';
 import 'wifi_direct_service.dart';
 
@@ -54,6 +55,12 @@ class LocalConnectAppState extends ChangeNotifier {
 
   final UpdateCheckService _updateCheckService = UpdateCheckService();
 
+  /// طبقة أخيرة اختيارية: مُرحِّل مركزي عبر الإنترنت (chat.sofinet.cc)
+  /// يُستخدَم فقط عندما تفشل كل الوسائل المباشرة (نفس الشبكة، بلوتوث،
+  /// Wi-Fi Direct) — مثلًا الطرفان على شبكتين مختلفتين تمامًا. التطبيق
+  /// يعمل بالكامل بدونه؛ فشل الاتصال به لا يُعطِّل أي شيء آخر.
+  final RelayService relay = RelayService();
+
   late DeviceIdentity identity;
   bool isReady = false;
   UpdateInfo? availableUpdate;
@@ -67,6 +74,7 @@ class LocalConnectAppState extends ChangeNotifier {
   StreamSubscription<Map<String, dynamic>>? _incomingSub;
   StreamSubscription<Map<String, dynamic>>? _bluetoothIncomingSub;
   StreamSubscription<Map<String, dynamic>>? _bluetoothHelloSub;
+  StreamSubscription<Map<String, dynamic>>? _relayIncomingSub;
   final Set<String> _bluetoothHelloRepliedTo = {};
 
   /// سجل أخطاء صغير في الذاكرة (يُعرض في شاشة "فحص الأخطاء")، يشمل أخطاء
@@ -113,6 +121,10 @@ class LocalConnectAppState extends ChangeNotifier {
     bluetoothMessaging.start();
     _bluetoothIncomingSub = bluetoothMessaging.incoming.listen(_handleIncomingWire);
     _bluetoothHelloSub = bluetoothMessaging.hello.listen(_handleBluetoothHello);
+    _relayIncomingSub = relay.incoming.listen(_handleIncomingWire);
+    // تسجيل واتصال بالمُرحِّل بلا انتظار — يحتاج إنترنت فعليًا، ويجب ألا
+    // يؤخّر إقلاع التطبيق (الذي يعمل بالكامل أوفلاين بدونه).
+    unawaited(_registerAndConnectRelay());
 
     final tcpPort = await socket.startServer();
     if (tcpPort > 0) {
@@ -176,6 +188,7 @@ class LocalConnectAppState extends ChangeNotifier {
   Future<void> updateDisplayName(String name) async {
     await _identityService.updateDisplayName(identity, name);
     _safeNotify();
+    unawaited(_registerWithRelay());
   }
 
   /// ضبط رقم هاتفك الخاص (اختياري). إن ضُبط، يُرفَق تلقائيًا مع بطاقة
@@ -183,7 +196,19 @@ class LocalConnectAppState extends ChangeNotifier {
   Future<void> updatePhoneNumber(String? phoneNumber) async {
     await _identityService.updatePhoneNumber(identity, phoneNumber);
     _safeNotify();
+    unawaited(_registerWithRelay());
   }
+
+  Future<void> _registerAndConnectRelay() async {
+    await _registerWithRelay();
+    await relay.connect(identity.internalNumber);
+  }
+
+  Future<void> _registerWithRelay() => relay.register(
+        internalNumber: identity.internalNumber,
+        displayName: identity.displayName,
+        phoneNumber: identity.phoneNumber,
+      );
 
   /// كلما ظهر جهاز عبر الاكتشاف التلقائي وشارك رقم هاتفه، وكان لدينا جهة
   /// اتصال محفوظة لنفس الرقم الداخلي بلا رقم هاتف بعد — نحفظه تلقائيًا.
@@ -426,24 +451,28 @@ class LocalConnectAppState extends ChangeNotifier {
     }
 
     final payload = message.toWirePayload(base64Data: base64Data);
-    final delivered = await _deliverViaAnyTransport(conversation, payload);
-
-    message.status = delivered ? MessageStatus.delivered : MessageStatus.failed;
+    message.status = await _deliverViaAnyTransport(conversation, payload);
     await _persistMessage(message);
     _safeNotify();
   }
 
   /// يجرّب كل وسيلة اتصال متاحة بالترتيب حتى تنجح واحدة: Wi-Fi المكتشَف
-  /// تلقائيًا، ثم عنوان IP يدوي (Wi-Fi أيضًا)، ثم بلوتوث كلاسيكي — الأخيران
-  /// يعملان حتى لو لم يظهر الطرف عبر اكتشاف UDP إطلاقًا (مثلًا بسبب عزل
-  /// أجهزة على الراوتر). يبقى queued تلقائيًا إن فشلت كل الوسائل، لإعادة
-  /// المحاولة لاحقًا.
-  Future<bool> _deliverViaAnyTransport(Conversation conversation, Map<String, dynamic> payload) async {
+  /// تلقائيًا، ثم عنوان IP يدوي (Wi-Fi أيضًا)، ثم بلوتوث كلاسيكي — الثلاثة
+  /// الأولى تُقِرّ باستلام الطرف الآخر فعليًا (delivered)، فتعمل حتى لو لم
+  /// يظهر عبر اكتشاف UDP إطلاقًا (مثلًا بسبب عزل أجهزة على الراوتر).
+  /// المُرحِّل المركزي هو المحاولة الأخيرة فقط (يحتاج إنترنت على الجهازين)؛
+  /// نجاحه يعني فقط أن الخادم استلم الرسالة وسيسلّمها لاحقًا، وليس أن
+  /// الطرف الآخر استلمها فعليًا الآن — لذا يُعلَّم sent لا delivered. يبقى
+  /// queued تلقائيًا إن فشلت كل الوسائل، لإعادة المحاولة لاحقًا.
+  Future<MessageStatus> _deliverViaAnyTransport(
+    Conversation conversation,
+    Map<String, dynamic> payload,
+  ) async {
     final peer = discovery.peerByInternalNumber(conversation.peerInternalNumber);
     if (peer != null) {
       final delivered =
           await socket.sendDirect(address: peer.address, port: peer.tcpPort, payload: payload);
-      if (delivered) return true;
+      if (delivered) return MessageStatus.delivered;
     }
 
     final matches = contacts.where((c) => c.internalNumber == conversation.peerInternalNumber);
@@ -455,17 +484,20 @@ class LocalConnectAppState extends ChangeNotifier {
       if (parsed != null) {
         final delivered =
             await socket.sendDirect(address: parsed, port: socket.preferredPort, payload: payload);
-        if (delivered) return true;
+        if (delivered) return MessageStatus.delivered;
       }
     }
 
     final bluetoothAddress = contact?.bluetoothAddress;
     if (bluetoothAddress != null) {
       final delivered = await bluetoothMessaging.sendDirect(address: bluetoothAddress, payload: payload);
-      if (delivered) return true;
+      if (delivered) return MessageStatus.delivered;
     }
 
-    return false;
+    final sentViaRelay = await relay.send(to: conversation.peerInternalNumber, payload: payload);
+    if (sentViaRelay) return MessageStatus.sent;
+
+    return MessageStatus.failed;
   }
 
   Future<void> _retryQueuedMessages() async {
@@ -853,6 +885,14 @@ class LocalConnectAppState extends ChangeNotifier {
       checks.add(DiagnosticCheck(label: 'واجهات الشبكة المحلية', ok: false, detail: 'تعذر القراءة: $error'));
     }
 
+    checks.add(DiagnosticCheck(
+      label: 'المُرحِّل المركزي (اختياري، عبر الإنترنت)',
+      ok: relay.isConnected,
+      detail: relay.isConnected
+          ? 'متصل — يعمل كخطة بديلة أخيرة إذا تعذّر الوصول المباشر'
+          : (relay.lastError ?? 'غير متصل حاليًا (طبيعي بلا إنترنت؛ يعيد المحاولة تلقائيًا)'),
+    ));
+
     final pendingCount = _messagesByConversation.values.expand((m) => m).where(
           (m) => m.outgoing && (m.status == MessageStatus.queued || m.status == MessageStatus.failed),
         ).length;
@@ -876,9 +916,11 @@ class LocalConnectAppState extends ChangeNotifier {
     _incomingSub?.cancel();
     _bluetoothIncomingSub?.cancel();
     _bluetoothHelloSub?.cancel();
+    _relayIncomingSub?.cancel();
     discovery.stop();
     socket.stop();
     bluetoothMessaging.stop();
+    unawaited(relay.dispose());
     super.dispose();
   }
 }
