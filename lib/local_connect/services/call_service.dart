@@ -1,0 +1,462 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:uuid/uuid.dart';
+
+import '../models/call_session.dart';
+
+/// دالة إرسال إشارة مكالمة لرقم داخلي معيَّن — عادة [AppState.sendCallSignal]،
+/// يُمرَّرها الطرف المستدعي بدل استيراد AppState هنا مباشرة (لتفادي اعتماد
+/// دائري بين الخدمتين).
+typedef CallSignalSender = Future<bool> Function(
+  String peerInternalNumber,
+  Map<String, dynamic> payload,
+);
+
+/// يدير دورة حياة مكالمة صوتية/مرئية واحدة عبر WebRTC: التقاط الوسائط
+/// المحلية، تفاوض SDP (عرض/رد)، تبادل مرشّحات ICE، وحالة الاتصال —
+/// باستخدام نفس سلسلة النقل الاحتياطية (Wi-Fi، بلوتوث، مُرحِّل) المستخدمة
+/// للرسائل النصية، عبر [CallSignalSender] المُمرَّر من AppState.
+///
+/// خادم STUN عام واحد (Google) لاكتشاف عنوان IP العلني عند اجتياز NAT.
+/// لا يوجد خادم TURN — فمكالمات عبر شبكات مقيَّدة جدًا (NAT متماثل مثلًا)
+/// قد لا تنجح؛ هذا قيد معروف بلا حل بدون خادم TURN مخصَّص.
+class CallService extends ChangeNotifier {
+  CallService({
+    required CallSignalSender sendSignal,
+    required String Function() localInternalNumber,
+    required String Function() localDisplayName,
+  })  : _sendSignal = sendSignal,
+        _localInternalNumber = localInternalNumber,
+        _localDisplayName = localDisplayName;
+
+  final CallSignalSender _sendSignal;
+  final String Function() _localInternalNumber;
+  final String Function() _localDisplayName;
+
+  static const Map<String, dynamic> _rtcConfiguration = {
+    'iceServers': [
+      {'urls': 'stun:stun.l.google.com:19302'},
+    ],
+  };
+
+  RTCPeerConnection? _pc;
+  MediaStream? _localStream;
+  String? _pendingOfferSdp;
+  final List<RTCIceCandidate> _pendingRemoteCandidates = [];
+  bool _remoteDescriptionSet = false;
+  Timer? _ringTimer;
+  Timer? _clearTimer;
+  bool _disposed = false;
+
+  final RTCVideoRenderer localRenderer = RTCVideoRenderer();
+  final RTCVideoRenderer remoteRenderer = RTCVideoRenderer();
+  bool _renderersInitialized = false;
+
+  CallSession? currentCall;
+  bool isMuted = false;
+  bool isSpeakerOn = false;
+  bool isCameraOff = false;
+
+  void _safeNotify() {
+    if (!_disposed) notifyListeners();
+  }
+
+  Future<void> _ensureRenderers() async {
+    if (_renderersInitialized) return;
+    await localRenderer.initialize();
+    await remoteRenderer.initialize();
+    _renderersInitialized = true;
+  }
+
+  // -------------------------------------------------------------------
+  // بدء مكالمة صادرة
+  // -------------------------------------------------------------------
+
+  Future<void> startCall({
+    required String peerInternalNumber,
+    required String peerDisplayName,
+    required CallMediaType mediaType,
+  }) async {
+    if (currentCall != null) return; // مكالمة أخرى جارية بالفعل
+
+    await _ensureRenderers();
+    final callId = const Uuid().v4();
+    currentCall = CallSession(
+      callId: callId,
+      peerInternalNumber: peerInternalNumber,
+      peerDisplayName: peerDisplayName,
+      direction: CallDirection.outgoing,
+      mediaType: mediaType,
+    );
+    _safeNotify();
+
+    try {
+      await _openLocalMedia(mediaType);
+      _pc = await createPeerConnection(_rtcConfiguration);
+      _wirePeerConnectionCallbacks();
+      for (final track in _localStream!.getTracks()) {
+        await _pc!.addTrack(track, _localStream!);
+      }
+
+      final offer = await _pc!.createOffer({
+        'offerToReceiveAudio': true,
+        'offerToReceiveVideo': mediaType == CallMediaType.video,
+      });
+      await _pc!.setLocalDescription(offer);
+
+      final delivered = await _sendSignal(peerInternalNumber, {
+        'type': 'call_offer',
+        'id': callId,
+        'senderInternalNumber': _localInternalNumber(),
+        'callerDisplayName': _localDisplayName(),
+        'mediaType': mediaType.name,
+        'sdp': offer.sdp,
+      });
+
+      if (!delivered) {
+        await _endCall(reason: 'تعذّر الوصول للطرف الآخر الآن', notifyPeer: false);
+        return;
+      }
+      _startRingTimeout();
+    } catch (error) {
+      await _endCall(reason: 'تعذّر بدء المكالمة: $error', notifyPeer: false);
+    }
+  }
+
+  // -------------------------------------------------------------------
+  // استقبال إشارات المكالمة (يُستدعى من AppState._handleIncomingWire)
+  // -------------------------------------------------------------------
+
+  Future<void> handleSignal(Map<String, dynamic> payload) async {
+    switch (payload['type']) {
+      case 'call_offer':
+        await _handleIncomingOffer(payload);
+      case 'call_answer':
+        await _handleIncomingAnswer(payload);
+      case 'call_ice_candidate':
+        await _handleIncomingIceCandidate(payload);
+      case 'call_reject':
+        await _handleIncomingReject(payload);
+      case 'call_end':
+        await _handleIncomingEnd(payload);
+    }
+  }
+
+  Future<void> _handleIncomingOffer(Map<String, dynamic> payload) async {
+    final callId = payload['id'];
+    final senderInternalNumber = payload['senderInternalNumber'];
+    final sdp = payload['sdp'];
+    if (callId is! String || senderInternalNumber is! String || sdp is! String) return;
+
+    if (currentCall != null) {
+      // مشغول بمكالمة أخرى بالفعل — رفض تلقائي بدل تجاهل صامت، حتى يعرف
+      // المتصل أن مكالمته لن تُجاب بدل أن تظل "ترن" له إلى أن تنتهي المهلة.
+      unawaited(_sendSignal(senderInternalNumber, {
+        'type': 'call_reject',
+        'id': callId,
+        'senderInternalNumber': _localInternalNumber(),
+        'reason': 'busy',
+      }));
+      return;
+    }
+
+    await _ensureRenderers();
+    final mediaType = payload['mediaType'] == 'video' ? CallMediaType.video : CallMediaType.audio;
+    currentCall = CallSession(
+      callId: callId,
+      peerInternalNumber: senderInternalNumber,
+      peerDisplayName: (payload['callerDisplayName'] as String?) ?? senderInternalNumber,
+      direction: CallDirection.incoming,
+      mediaType: mediaType,
+    );
+    _pendingOfferSdp = sdp;
+    _startRingTimeout();
+    _safeNotify();
+  }
+
+  /// يقبل مكالمة واردة جارٍ رنينها حاليًا — هنا فقط يُطلب إذن الكاميرا/
+  /// الميكروفون فعليًا، وليس عند مجرّد وصول العرض، حتى لا يُفاجَأ المستخدم
+  /// بطلب صلاحية قبل أن يقرر الردّ من الأساس.
+  Future<void> acceptCall() async {
+    final call = currentCall;
+    final sdp = _pendingOfferSdp;
+    if (call == null || call.direction != CallDirection.incoming || sdp == null) return;
+    _cancelRingTimeout();
+    call.state = CallState.connecting;
+    _safeNotify();
+
+    try {
+      await _openLocalMedia(call.mediaType);
+      _pc = await createPeerConnection(_rtcConfiguration);
+      _wirePeerConnectionCallbacks();
+      for (final track in _localStream!.getTracks()) {
+        await _pc!.addTrack(track, _localStream!);
+      }
+
+      await _pc!.setRemoteDescription(RTCSessionDescription(sdp, 'offer'));
+      _remoteDescriptionSet = true;
+      await _drainPendingCandidates();
+
+      final answer = await _pc!.createAnswer({
+        'offerToReceiveAudio': true,
+        'offerToReceiveVideo': call.mediaType == CallMediaType.video,
+      });
+      await _pc!.setLocalDescription(answer);
+
+      await _sendSignal(call.peerInternalNumber, {
+        'type': 'call_answer',
+        'id': call.callId,
+        'senderInternalNumber': _localInternalNumber(),
+        'sdp': answer.sdp,
+      });
+    } catch (error) {
+      await _endCall(reason: 'تعذّر قبول المكالمة: $error');
+    }
+  }
+
+  Future<void> rejectCall() async {
+    final call = currentCall;
+    if (call == null || call.direction != CallDirection.incoming) return;
+    unawaited(_sendSignal(call.peerInternalNumber, {
+      'type': 'call_reject',
+      'id': call.callId,
+      'senderInternalNumber': _localInternalNumber(),
+    }));
+    await _endCall(reason: null, notifyPeer: false);
+  }
+
+  Future<void> endCall() => _endCall(reason: null, notifyPeer: true);
+
+  Future<void> _handleIncomingAnswer(Map<String, dynamic> payload) async {
+    final call = currentCall;
+    final pc = _pc;
+    final sdp = payload['sdp'];
+    if (call == null || pc == null || sdp is! String || payload['id'] != call.callId) return;
+    _cancelRingTimeout();
+    call.state = CallState.connecting;
+    _safeNotify();
+    await pc.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
+    _remoteDescriptionSet = true;
+    await _drainPendingCandidates();
+  }
+
+  Future<void> _handleIncomingIceCandidate(Map<String, dynamic> payload) async {
+    final call = currentCall;
+    final candidate = payload['candidate'];
+    if (call == null || _pc == null || payload['id'] != call.callId || candidate is! String) return;
+
+    final iceCandidate = RTCIceCandidate(
+      candidate,
+      payload['sdpMid'] as String?,
+      payload['sdpMLineIndex'] as int?,
+    );
+    if (!_remoteDescriptionSet) {
+      _pendingRemoteCandidates.add(iceCandidate);
+    } else {
+      await _pc!.addCandidate(iceCandidate);
+    }
+  }
+
+  Future<void> _drainPendingCandidates() async {
+    for (final candidate in _pendingRemoteCandidates) {
+      await _pc?.addCandidate(candidate);
+    }
+    _pendingRemoteCandidates.clear();
+  }
+
+  Future<void> _handleIncomingReject(Map<String, dynamic> payload) async {
+    final call = currentCall;
+    if (call == null || payload['id'] != call.callId) return;
+    final busy = payload['reason'] == 'busy';
+    await _endCall(
+      reason: busy ? 'الطرف الآخر مشغول بمكالمة أخرى' : 'رفض الطرف الآخر المكالمة',
+      notifyPeer: false,
+    );
+  }
+
+  Future<void> _handleIncomingEnd(Map<String, dynamic> payload) async {
+    final call = currentCall;
+    if (call == null || payload['id'] != call.callId) return;
+    await _endCall(reason: 'أنهى الطرف الآخر المكالمة', notifyPeer: false);
+  }
+
+  // -------------------------------------------------------------------
+  // التحكم أثناء المكالمة
+  // -------------------------------------------------------------------
+
+  Future<void> toggleMute() async {
+    final stream = _localStream;
+    if (stream == null) return;
+    isMuted = !isMuted;
+    for (final track in stream.getAudioTracks()) {
+      track.enabled = !isMuted;
+    }
+    _safeNotify();
+  }
+
+  Future<void> toggleSpeaker() async {
+    isSpeakerOn = !isSpeakerOn;
+    await Helper.setSpeakerphoneOn(isSpeakerOn);
+    _safeNotify();
+  }
+
+  Future<void> toggleCamera() async {
+    final stream = _localStream;
+    if (stream == null || currentCall?.mediaType != CallMediaType.video) return;
+    isCameraOff = !isCameraOff;
+    for (final track in stream.getVideoTracks()) {
+      track.enabled = !isCameraOff;
+    }
+    _safeNotify();
+  }
+
+  Future<void> switchCamera() async {
+    final stream = _localStream;
+    if (stream == null || currentCall?.mediaType != CallMediaType.video) return;
+    final tracks = stream.getVideoTracks();
+    if (tracks.isEmpty) return;
+    await Helper.switchCamera(tracks.first);
+  }
+
+  // -------------------------------------------------------------------
+  // مساعدات داخلية
+  // -------------------------------------------------------------------
+
+  /// يطلب صلاحيات الميكروفون (ودائمًا الكاميرا إن كانت مكالمة مرئية) قبل
+  /// محاولة التقاط الوسائط — رفض واضح هنا أفضل من استثناء غامض من WebRTC
+  /// نفسه لاحقًا.
+  Future<void> _openLocalMedia(CallMediaType mediaType) async {
+    final permissions = <Permission>[
+      Permission.microphone,
+      if (mediaType == CallMediaType.video) Permission.camera,
+    ];
+    final statuses = await permissions.request();
+    if (statuses.values.any((status) => !status.isGranted)) {
+      throw 'صلاحية الميكروفون${mediaType == CallMediaType.video ? '/الكاميرا' : ''} مرفوضة';
+    }
+
+    _localStream = await navigator.mediaDevices.getUserMedia({
+      'audio': true,
+      'video': mediaType == CallMediaType.video ? {'facingMode': 'user'} : false,
+    });
+    localRenderer.srcObject = _localStream;
+    isSpeakerOn = mediaType == CallMediaType.video;
+    unawaited(Helper.setSpeakerphoneOn(isSpeakerOn));
+  }
+
+  void _wirePeerConnectionCallbacks() {
+    final pc = _pc!;
+    final call = currentCall!;
+    pc.onIceCandidate = (candidate) {
+      if (candidate.candidate == null) return;
+      unawaited(_sendSignal(call.peerInternalNumber, {
+        'type': 'call_ice_candidate',
+        'id': call.callId,
+        'senderInternalNumber': _localInternalNumber(),
+        'candidate': candidate.candidate,
+        'sdpMid': candidate.sdpMid,
+        'sdpMLineIndex': candidate.sdpMLineIndex,
+      }));
+    };
+    pc.onTrack = (event) {
+      if (event.streams.isNotEmpty) {
+        remoteRenderer.srcObject = event.streams.first;
+        _safeNotify();
+      }
+    };
+    pc.onConnectionState = (state) {
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+        if (call.state != CallState.active) {
+          call.state = CallState.active;
+          call.connectedAt = DateTime.now();
+          _safeNotify();
+        }
+      } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+          state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
+        unawaited(_endCall(reason: 'انقطع الاتصال', notifyPeer: false));
+      }
+    };
+  }
+
+  void _startRingTimeout() {
+    _ringTimer?.cancel();
+    _ringTimer = Timer(const Duration(seconds: 45), () {
+      if (currentCall?.state == CallState.ringing) {
+        unawaited(_endCall(reason: 'لا يوجد رد', notifyPeer: true));
+      }
+    });
+  }
+
+  void _cancelRingTimeout() {
+    _ringTimer?.cancel();
+    _ringTimer = null;
+  }
+
+  Future<void> _endCall({required String? reason, bool notifyPeer = true}) async {
+    final call = currentCall;
+    _cancelRingTimeout();
+    if (call != null && notifyPeer && call.state != CallState.ended) {
+      unawaited(_sendSignal(call.peerInternalNumber, {
+        'type': 'call_end',
+        'id': call.callId,
+        'senderInternalNumber': _localInternalNumber(),
+      }));
+    }
+    await _teardownMedia();
+
+    if (call != null) {
+      call.state = CallState.ended;
+      call.endReason = reason;
+      _safeNotify();
+      // يُبقي بطاقة "انتهت المكالمة" ظاهرة لحظات قبل اختفائها، بدل قفل
+      // الواجهة فورًا لمكالمة سابقة.
+      _clearTimer?.cancel();
+      _clearTimer = Timer(const Duration(seconds: 3), () {
+        if (currentCall == call) {
+          currentCall = null;
+          _safeNotify();
+        }
+      });
+    }
+  }
+
+  Future<void> _teardownMedia() async {
+    _pendingRemoteCandidates.clear();
+    _remoteDescriptionSet = false;
+    _pendingOfferSdp = null;
+    try {
+      await _pc?.close();
+    } catch (_) {
+      // لا شيء — الهدف فقط تفادي إسقاط عملية الإنهاء بسبب خطأ في التنظيف.
+    }
+    _pc = null;
+
+    final stream = _localStream;
+    _localStream = null;
+    if (stream != null) {
+      for (final track in stream.getTracks()) {
+        await track.stop();
+      }
+    }
+    // ضبط srcObject على مُصيِّر لم يُهيَّأ بعد (initialize()) يرمي استثناءً —
+    // يحدث هذا فعليًا عند dispose لتطبيق لم تُجرَ فيه أي مكالمة إطلاقًا قط.
+    if (_renderersInitialized) {
+      localRenderer.srcObject = null;
+      remoteRenderer.srcObject = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _ringTimer?.cancel();
+    _clearTimer?.cancel();
+    unawaited(_teardownMedia());
+    unawaited(localRenderer.dispose());
+    unawaited(remoteRenderer.dispose());
+    super.dispose();
+  }
+}

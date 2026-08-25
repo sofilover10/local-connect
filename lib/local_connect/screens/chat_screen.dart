@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 
 import '../app_scope.dart';
+import '../models/call_session.dart';
 import '../models/conversation.dart';
 import '../models/message.dart';
 import '../widgets/message_bubble.dart';
@@ -23,6 +26,8 @@ class _ChatScreenState extends State<ChatScreen> {
   final _scrollController = ScrollController();
   final _recorder = AudioRecorder();
   bool _isRecording = false;
+  Timer? _recordingTicker;
+  Duration _recordingElapsed = Duration.zero;
 
   /// معرّف الرسالة قيد التعديل حاليًا، أو null إن كنا نكتب رسالة جديدة.
   String? _editingMessageId;
@@ -31,8 +36,15 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _controller.dispose();
     _scrollController.dispose();
+    _recordingTicker?.cancel();
     _recorder.dispose();
     super.dispose();
+  }
+
+  String _formatDuration(Duration d) {
+    final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
   }
 
   void _scrollToBottom() {
@@ -113,8 +125,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _toggleVoiceRecording(BuildContext context) async {
     if (_isRecording) {
+      _recordingTicker?.cancel();
       final path = await _recorder.stop();
-      setState(() => _isRecording = false);
+      setState(() {
+        _isRecording = false;
+        _recordingElapsed = Duration.zero;
+      });
       if (path == null || !context.mounted) return;
       await AppScope.of(context).sendAttachment(
         conversationId: widget.conversation.id,
@@ -138,7 +154,14 @@ class _ChatScreenState extends State<ChatScreen> {
     final tempDir = await getTemporaryDirectory();
     final path = '${tempDir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
     await _recorder.start(const RecordConfig(), path: path);
-    setState(() => _isRecording = true);
+    setState(() {
+      _isRecording = true;
+      _recordingElapsed = Duration.zero;
+    });
+    _recordingTicker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() => _recordingElapsed += const Duration(seconds: 1));
+    });
   }
 
   Future<void> _saveToPhoneContacts(BuildContext context) async {
@@ -149,6 +172,21 @@ class _ChatScreenState extends State<ChatScreen> {
       SnackBar(
         content: Text(saved ? 'تم الحفظ في جهات اتصال الهاتف' : 'تعذّر الحفظ — تحقق من صلاحية جهات الاتصال'),
       ),
+    );
+  }
+
+  Future<void> _startCall(BuildContext context, CallMediaType mediaType) async {
+    final appState = AppScope.of(context);
+    if (appState.callService.currentCall != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يوجد مكالمة جارية بالفعل')),
+      );
+      return;
+    }
+    await appState.callService.startCall(
+      peerInternalNumber: widget.conversation.peerInternalNumber,
+      peerDisplayName: widget.conversation.peerDisplayName,
+      mediaType: mediaType,
     );
   }
 
@@ -194,6 +232,16 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
             actions: [
+              IconButton(
+                icon: const Icon(Icons.call),
+                tooltip: 'اتصال صوتي',
+                onPressed: () => _startCall(context, CallMediaType.audio),
+              ),
+              IconButton(
+                icon: const Icon(Icons.videocam),
+                tooltip: 'اتصال مرئي',
+                onPressed: () => _startCall(context, CallMediaType.video),
+              ),
               PopupMenuButton<void>(
                 itemBuilder: (context) => [
                   PopupMenuItem(
@@ -231,6 +279,27 @@ class _ChatScreenState extends State<ChatScreen> {
                         },
                       ),
               ),
+              if (_isRecording)
+                Container(
+                  width: double.infinity,
+                  color: Colors.red.shade50,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Row(
+                    children: [
+                      const _PulsingRecordingDot(),
+                      const SizedBox(width: 10),
+                      const Text(
+                        'جارٍ تسجيل رسالة صوتية...',
+                        style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                      ),
+                      const Spacer(),
+                      Text(
+                        _formatDuration(_recordingElapsed),
+                        style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+                      ),
+                    ],
+                  ),
+                ),
               if (_editingMessageId != null)
                 Container(
                   width: double.infinity,
@@ -294,6 +363,37 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
         );
       },
+    );
+  }
+}
+
+/// نقطة حمراء تنبض بصريًا (تكبر وتصغر) طوال مدة التسجيل — إشارة يصعب
+/// تفويتها بخلاف مجرّد تغيير لون أيقونة صغيرة.
+class _PulsingRecordingDot extends StatefulWidget {
+  const _PulsingRecordingDot();
+
+  @override
+  State<_PulsingRecordingDot> createState() => _PulsingRecordingDotState();
+}
+
+class _PulsingRecordingDotState extends State<_PulsingRecordingDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 700),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: Tween<double>(begin: 0.3, end: 1).animate(_controller),
+      child: const Icon(Icons.circle, color: Colors.red, size: 12),
     );
   }
 }

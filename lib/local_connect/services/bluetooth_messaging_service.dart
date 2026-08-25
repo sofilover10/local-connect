@@ -77,7 +77,16 @@ class BluetoothMessagingService {
       return;
     }
 
-    const knownTypes = {'message', 'edit_message', 'delete_message'};
+    const knownTypes = {
+      'message',
+      'edit_message',
+      'delete_message',
+      'call_offer',
+      'call_answer',
+      'call_ice_candidate',
+      'call_end',
+      'call_reject',
+    };
     if (knownTypes.contains(map['type'])) {
       _incomingController.add(map);
       final ackLine = '${jsonEncode({'type': 'ack', 'id': map['id']})}\n';

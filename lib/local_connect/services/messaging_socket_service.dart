@@ -91,9 +91,19 @@ class MessagingSocketService {
       return;
     }
     // 'message' لرسالة جديدة، 'edit_message'/'delete_message' لعمليات
-    // تحرير/حذف على رسالة موجودة مسبقًا — الثلاثة تُقَرّ بنفس الآلية
-    // (ack بمعرّف الحمولة) وتُمرَّر لـAppState الذي يفرّق بينها فعليًا.
-    const knownTypes = {'message', 'edit_message', 'delete_message'};
+    // تحرير/حذف على رسالة موجودة مسبقًا، و'call_*' لإشارات WebRTC (عرض/رد/
+    // مرشّح ICE/إنهاء/رفض مكالمة) — كلها تُقَرّ بنفس الآلية (ack بمعرّف
+    // الحمولة) وتُمرَّر لـAppState الذي يفرّق بينها فعليًا.
+    const knownTypes = {
+      'message',
+      'edit_message',
+      'delete_message',
+      'call_offer',
+      'call_answer',
+      'call_ice_candidate',
+      'call_end',
+      'call_reject',
+    };
     if (knownTypes.contains(map['type'])) {
       _incomingController.add(map);
       final ack = jsonEncode({'type': 'ack', 'id': map['id']});

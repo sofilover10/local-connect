@@ -15,6 +15,7 @@ import '../models/message.dart';
 import '../models/peer_info.dart';
 import 'bluetooth_messaging_service.dart';
 import 'bluetooth_transport_service.dart';
+import 'call_service.dart';
 import 'device_identity_service.dart';
 import 'lan_discovery_service.dart';
 import 'local_store_service.dart';
@@ -60,6 +61,16 @@ class LocalConnectAppState extends ChangeNotifier {
   /// Wi-Fi Direct) — مثلًا الطرفان على شبكتين مختلفتين تمامًا. التطبيق
   /// يعمل بالكامل بدونه؛ فشل الاتصال به لا يُعطِّل أي شيء آخر.
   final RelayService relay = RelayService();
+
+  /// مكالمات صوتية/مرئية عبر WebRTC، تستخدم [sendCallSignal] لإرسال إشاراتها
+  /// (عروض/ردود/مرشّحات ICE) عبر نفس سلسلة النقل الاحتياطية المستخدمة
+  /// للرسائل النصية. تُبنى كـcallback بدل استيراد مباشر لتفادي اعتماد دائري
+  /// بين الخدمتين، ولأن identity غير جاهز بعد وقت الإنشاء (late، يُضبط في init).
+  late final CallService callService = CallService(
+    sendSignal: sendCallSignal,
+    localInternalNumber: () => identity.internalNumber,
+    localDisplayName: () => identity.displayName,
+  );
 
   late DeviceIdentity identity;
   bool isReady = false;
@@ -451,7 +462,7 @@ class LocalConnectAppState extends ChangeNotifier {
     }
 
     final payload = message.toWirePayload(base64Data: base64Data);
-    message.status = await _deliverViaAnyTransport(conversation, payload);
+    message.status = await _deliverViaAnyTransport(conversation.peerInternalNumber, payload);
     await _persistMessage(message);
     _safeNotify();
   }
@@ -464,18 +475,22 @@ class LocalConnectAppState extends ChangeNotifier {
   /// نجاحه يعني فقط أن الخادم استلم الرسالة وسيسلّمها لاحقًا، وليس أن
   /// الطرف الآخر استلمها فعليًا الآن — لذا يُعلَّم sent لا delivered. يبقى
   /// queued تلقائيًا إن فشلت كل الوسائل، لإعادة المحاولة لاحقًا.
+  ///
+  /// يأخذ الرقم الداخلي مباشرة (لا كائن Conversation) حتى تقدر إشارات
+  /// المكالمات (WebRTC signaling) تعيد استخدامه أيضًا دون الحاجة لمحادثة
+  /// نصية قائمة أصلًا.
   Future<MessageStatus> _deliverViaAnyTransport(
-    Conversation conversation,
+    String peerInternalNumber,
     Map<String, dynamic> payload,
   ) async {
-    final peer = discovery.peerByInternalNumber(conversation.peerInternalNumber);
+    final peer = discovery.peerByInternalNumber(peerInternalNumber);
     if (peer != null) {
       final delivered =
           await socket.sendDirect(address: peer.address, port: peer.tcpPort, payload: payload);
       if (delivered) return MessageStatus.delivered;
     }
 
-    final matches = contacts.where((c) => c.internalNumber == conversation.peerInternalNumber);
+    final matches = contacts.where((c) => c.internalNumber == peerInternalNumber);
     final contact = matches.isEmpty ? null : matches.first;
 
     final manualAddress = contact?.manualAddress;
@@ -494,10 +509,17 @@ class LocalConnectAppState extends ChangeNotifier {
       if (delivered) return MessageStatus.delivered;
     }
 
-    final sentViaRelay = await relay.send(to: conversation.peerInternalNumber, payload: payload);
+    final sentViaRelay = await relay.send(to: peerInternalNumber, payload: payload);
     if (sentViaRelay) return MessageStatus.sent;
 
     return MessageStatus.failed;
+  }
+
+  /// يُستخدَم من [CallService] لإرسال إشارات WebRTC (عروض/ردود/مرشّحات ICE)
+  /// عبر نفس سلسلة النقل الاحتياطية المستخدمة للرسائل العادية.
+  Future<bool> sendCallSignal(String peerInternalNumber, Map<String, dynamic> payload) async {
+    final status = await _deliverViaAnyTransport(peerInternalNumber, payload);
+    return status == MessageStatus.delivered || status == MessageStatus.sent;
   }
 
   Future<void> _retryQueuedMessages() async {
@@ -541,7 +563,7 @@ class LocalConnectAppState extends ChangeNotifier {
     _safeNotify();
 
     final conversation = conversations.firstWhere((c) => c.id == conversationId);
-    unawaited(_deliverViaAnyTransport(conversation, {
+    unawaited(_deliverViaAnyTransport(conversation.peerInternalNumber, {
       'type': 'edit_message',
       'id': message.id,
       'senderInternalNumber': identity.internalNumber,
@@ -569,7 +591,7 @@ class LocalConnectAppState extends ChangeNotifier {
       message.isDeleted = true;
       await _persistMessage(message);
       final conversation = conversations.firstWhere((c) => c.id == conversationId);
-      unawaited(_deliverViaAnyTransport(conversation, {
+      unawaited(_deliverViaAnyTransport(conversation.peerInternalNumber, {
         'type': 'delete_message',
         'id': message.id,
         'senderInternalNumber': identity.internalNumber,
@@ -622,6 +644,15 @@ class LocalConnectAppState extends ChangeNotifier {
           return;
         case 'delete_message':
           _handleIncomingDelete(conversationId, senderInternalNumber, payload);
+          return;
+        case 'call_offer':
+        case 'call_answer':
+        case 'call_ice_candidate':
+        case 'call_reject':
+        case 'call_end':
+          // إشارات المكالمات لا تُخزَّن كرسائل محادثة — تُمرَّر مباشرة إلى
+          // CallService الذي يدير حالتها الخاصة.
+          unawaited(callService.handleSignal(payload));
           return;
         default:
           _handleIncomingNewMessage(conversationId, senderInternalNumber, payload);
@@ -921,6 +952,7 @@ class LocalConnectAppState extends ChangeNotifier {
     socket.stop();
     bluetoothMessaging.stop();
     unawaited(relay.dispose());
+    callService.dispose();
     super.dispose();
   }
 }

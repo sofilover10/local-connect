@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
 import 'local_connect/app_scope.dart';
+import 'local_connect/screens/call_screen.dart';
 import 'local_connect/screens/home_screen.dart';
 import 'local_connect/services/app_state.dart';
 
@@ -87,6 +88,15 @@ class _LocalConnectAppState extends State<LocalConnectApp> {
         title: 'LocalConnect',
         locale: const Locale('ar'),
         theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal)),
+        // builder يلفّ كل شجرة المسارات (Navigator) — هذا يجعل شاشة المكالمة
+        // تظهر فوق أي شاشة حالية فور وصول عرض مكالمة، بدل الحاجة لدفعها
+        // (push) من داخل كل شاشة على حدة أو تفويت اتصال وارد أثناء التصفّح.
+        builder: (context, child) => Stack(
+          children: [
+            ?child,
+            CallOverlay(callService: widget.appState.callService),
+          ],
+        ),
         home: FutureBuilder<void>(
           future: _initFuture,
           builder: (context, snapshot) {
