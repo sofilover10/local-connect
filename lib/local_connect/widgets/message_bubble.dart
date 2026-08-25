@@ -12,12 +12,18 @@ class MessageBubble extends StatelessWidget {
     this.onEdit,
     this.onDeleteForMe,
     this.onDeleteForEveryone,
+    this.senderLabel,
   });
 
   final ChatMessage message;
   final VoidCallback? onEdit;
   final VoidCallback? onDeleteForMe;
   final VoidCallback? onDeleteForEveryone;
+
+  /// اسم مُرسِل الرسالة — يُعرَض فقط لرسالة واردة في محادثة جماعية (حيث قد
+  /// يكون المُرسِل أي عضو، بخلاف المحادثة الثنائية حيث الطرف واحد معروف
+  /// أصلًا من عنوان الشاشة).
+  final String? senderLabel;
 
   bool get _hasActions => onEdit != null || onDeleteForMe != null || onDeleteForEveryone != null;
 
@@ -85,6 +91,14 @@ class MessageBubble extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (senderLabel != null && !message.outgoing)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    senderLabel!,
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: textColor.withValues(alpha: 0.85)),
+                  ),
+                ),
               _buildContent(textColor),
               const SizedBox(height: 4),
               Row(

@@ -81,6 +81,7 @@ class BluetoothMessagingService {
       'message',
       'edit_message',
       'delete_message',
+      'group_invite',
       'call_offer',
       'call_answer',
       'call_ice_candidate',

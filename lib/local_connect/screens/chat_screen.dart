@@ -60,6 +60,11 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
+  String _displayNameFor(LocalConnectAppState appState, String internalNumber) {
+    final matches = appState.contacts.where((c) => c.internalNumber == internalNumber);
+    return matches.isEmpty ? internalNumber : matches.first.displayName;
+  }
+
   String _formatDuration(Duration d) {
     final minutes = d.inMinutes.remainder(60).toString().padLeft(2, '0');
     final seconds = d.inSeconds.remainder(60).toString().padLeft(2, '0');
@@ -253,12 +258,14 @@ class _ChatScreenState extends State<ChatScreen> {
         final online = appState.isPeerOnline(widget.conversation.peerInternalNumber);
         final blocked = appState.isBlocked(widget.conversation.peerInternalNumber);
 
+        final isGroup = widget.conversation.isGroup;
+
         return Scaffold(
           appBar: AppBar(
             title: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                StatusDot(online: online),
+                if (isGroup) const Icon(Icons.groups) else StatusDot(online: online),
                 const SizedBox(width: 8),
                 Flexible(
                   child: Column(
@@ -267,7 +274,9 @@ class _ChatScreenState extends State<ChatScreen> {
                     children: [
                       Text(widget.conversation.peerDisplayName, overflow: TextOverflow.ellipsis),
                       Text(
-                        online ? 'متصل الآن على الشبكة' : 'غير ظاهر حاليًا — سيتم الإرسال عند ظهوره',
+                        isGroup
+                            ? '${widget.conversation.memberInternalNumbers.length + 1} أعضاء'
+                            : (online ? 'متصل الآن على الشبكة' : 'غير ظاهر حاليًا — سيتم الإرسال عند ظهوره'),
                         style: const TextStyle(fontSize: 11, fontWeight: FontWeight.normal),
                       ),
                     ],
@@ -276,34 +285,39 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
             actions: [
-              IconButton(
-                icon: const Icon(Icons.call),
-                tooltip: 'اتصال صوتي',
-                onPressed: () => _startCall(context, CallMediaType.audio),
-              ),
-              IconButton(
-                icon: const Icon(Icons.videocam),
-                tooltip: 'اتصال مرئي',
-                onPressed: () => _startCall(context, CallMediaType.video),
-              ),
+              if (!isGroup) ...[
+                IconButton(
+                  icon: const Icon(Icons.call),
+                  tooltip: 'اتصال صوتي',
+                  onPressed: () => _startCall(context, CallMediaType.audio),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.videocam),
+                  tooltip: 'اتصال مرئي',
+                  onPressed: () => _startCall(context, CallMediaType.video),
+                ),
+              ],
               PopupMenuButton<void>(
                 itemBuilder: (context) => [
-                  PopupMenuItem(
-                    onTap: () => showRenameContactDialog(context, widget.conversation),
-                    child: const Text('إعادة تسمية جهة الاتصال'),
-                  ),
-                  PopupMenuItem(
-                    onTap: () => _saveToPhoneContacts(context),
-                    child: const Text('حفظ في جهات اتصال الهاتف'),
-                  ),
+                  if (!isGroup) ...[
+                    PopupMenuItem(
+                      onTap: () => showRenameContactDialog(context, widget.conversation),
+                      child: const Text('إعادة تسمية جهة الاتصال'),
+                    ),
+                    PopupMenuItem(
+                      onTap: () => _saveToPhoneContacts(context),
+                      child: const Text('حفظ في جهات اتصال الهاتف'),
+                    ),
+                  ],
                   PopupMenuItem(
                     onTap: () => _toggleArchive(context),
                     child: Text(widget.conversation.isArchived ? 'إلغاء أرشفة المحادثة' : 'أرشفة المحادثة'),
                   ),
-                  PopupMenuItem(
-                    onTap: () => _toggleBlock(context, blocked),
-                    child: Text(blocked ? 'إلغاء حظر جهة الاتصال' : 'حظر جهة الاتصال'),
-                  ),
+                  if (!isGroup)
+                    PopupMenuItem(
+                      onTap: () => _toggleBlock(context, blocked),
+                      child: Text(blocked ? 'إلغاء حظر جهة الاتصال' : 'حظر جهة الاتصال'),
+                    ),
                 ],
               ),
             ],
@@ -321,6 +335,9 @@ class _ChatScreenState extends State<ChatScreen> {
                           final message = messages[index];
                           return MessageBubble(
                             message: message,
+                            senderLabel: isGroup && !message.outgoing
+                                ? _displayNameFor(appState, message.senderInternalNumber)
+                                : null,
                             onEdit: message.outgoing && message.kind == MessageKind.text
                                 ? () => _startEdit(message)
                                 : null,

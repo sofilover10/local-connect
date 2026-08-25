@@ -10,9 +10,15 @@ class Conversation {
     this.lastMessagePreview,
     this.lastMessageAt,
     this.isArchived = false,
-  });
+    this.isGroup = false,
+    List<String>? memberInternalNumbers,
+    this.groupOwnerInternalNumber,
+  }) : memberInternalNumbers = memberInternalNumbers ?? [];
 
   final String id;
+
+  /// فارغ دائمًا للمجموعات — لا "طرف واحد" لمحادثة جماعية. استخدم
+  /// [memberInternalNumbers] بدلًا منه فيها.
   final String peerInternalNumber;
   String peerDisplayName;
   String? lastMessagePreview;
@@ -21,6 +27,16 @@ class Conversation {
   /// الأرشفة محلية بحتة (كل جهاز يقرّرها بنفسه) — لا حاجة لإخبار الطرف
   /// الآخر أو أي مزامنة عبر الشبكة.
   bool isArchived;
+
+  final bool isGroup;
+
+  /// الأعضاء الآخرون في المجموعة (**بدون** رقمي أنا) — يُستخدم مباشرة عند
+  /// توزيع رسالة على الجميع. فارغة دائمًا لمحادثة ثنائية عادية.
+  final List<String> memberInternalNumbers;
+
+  /// منشئ المجموعة أصلًا (أو من أرسل الدعوة التي أنشأتها لديّ). لا صلاحيات
+  /// إدارية خاصة مرتبطة به بعد في هذه النسخة — مجرّد معلومة عرض.
+  final String? groupOwnerInternalNumber;
 
   static String idFor(String internalNumberA, String internalNumberB) {
     final pair = [internalNumberA, internalNumberB]..sort();
@@ -34,6 +50,9 @@ class Conversation {
         'lastMessagePreview': lastMessagePreview,
         'lastMessageAt': lastMessageAt?.toIso8601String(),
         'isArchived': isArchived,
+        'isGroup': isGroup,
+        'memberInternalNumbers': memberInternalNumbers,
+        'groupOwnerInternalNumber': groupOwnerInternalNumber,
       };
 
   factory Conversation.fromMap(Map<String, dynamic> map) => Conversation(
@@ -45,5 +64,9 @@ class Conversation {
             ? null
             : DateTime.parse(map['lastMessageAt'] as String),
         isArchived: map['isArchived'] as bool? ?? false,
+        isGroup: map['isGroup'] as bool? ?? false,
+        memberInternalNumbers:
+            (map['memberInternalNumbers'] as List<dynamic>?)?.cast<String>() ?? const [],
+        groupOwnerInternalNumber: map['groupOwnerInternalNumber'] as String?,
       );
 }

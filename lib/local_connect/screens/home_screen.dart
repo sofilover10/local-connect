@@ -14,9 +14,39 @@ import 'archived_conversations_screen.dart';
 import 'blocked_contacts_screen.dart';
 import 'bluetooth_tab.dart';
 import 'chat_screen.dart';
+import 'create_group_dialog.dart';
 import 'diagnostics_screen.dart';
 import 'edit_name_dialog.dart';
 import 'wifi_direct_tab.dart';
+
+Future<void> _showAddMenu(BuildContext context) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    builder: (context) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.person_add),
+            title: const Text('إضافة جهة اتصال'),
+            onTap: () {
+              Navigator.pop(context);
+              showAddContactDialog(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.group_add),
+            title: const Text('مجموعة جديدة'),
+            onTap: () {
+              Navigator.pop(context);
+              showCreateGroupDialog(context);
+            },
+          ),
+        ],
+      ),
+    ),
+  );
+}
 
 Future<void> _showAbout(BuildContext context) async {
   final info = await PackageInfo.fromPlatform();
@@ -171,8 +201,8 @@ class HomeScreen extends StatelessWidget {
           ),
         ),
         floatingActionButton: FloatingActionButton(
-          onPressed: () => showAddContactDialog(context),
-          child: const Icon(Icons.person_add),
+          onPressed: () => _showAddMenu(context),
+          child: const Icon(Icons.add),
         ),
       ),
     );
@@ -204,14 +234,17 @@ class _ConversationsTab extends StatelessWidget {
       itemCount: conversations.length,
       itemBuilder: (context, index) {
         final conversation = conversations[index];
-        final online = appState.isPeerOnline(conversation.peerInternalNumber);
+        final online = !conversation.isGroup && appState.isPeerOnline(conversation.peerInternalNumber);
         final initial =
             conversation.peerDisplayName.isEmpty ? '?' : conversation.peerDisplayName[0];
         return ListTile(
-          leading: CircleAvatar(child: Text(initial)),
+          leading: CircleAvatar(
+            child: conversation.isGroup ? const Icon(Icons.groups) : Text(initial),
+          ),
           title: Text(conversation.peerDisplayName),
           subtitle: Text(
-            conversation.lastMessagePreview ?? conversation.peerInternalNumber,
+            conversation.lastMessagePreview ??
+                (conversation.isGroup ? 'مجموعة' : conversation.peerInternalNumber),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),

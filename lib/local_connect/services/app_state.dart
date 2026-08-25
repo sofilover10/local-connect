@@ -470,6 +470,99 @@ class LocalConnectAppState extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------------
+  // المجموعات
+  // ---------------------------------------------------------------------
+
+  /// ينشئ مجموعة ويدعو أعضاءها الآخرين — كل واحد منهم يُنشئ لديه محليًا
+  /// نفس المحادثة (بنفس [Conversation.id]) فور استلام دعوته، عبر
+  /// [_handleGroupInvite]. لا خادم مركزي يُنسِّق العضوية؛ كل جهاز يوزّع
+  /// رسائله على الأعضاء الآخرين مباشرة (انظر [_fanOutToGroup]).
+  Future<Conversation> createGroup({
+    required String name,
+    required List<String> memberInternalNumbers,
+  }) async {
+    final trimmedName = name.trim();
+    final otherMembers = memberInternalNumbers.toSet().toList();
+    final groupId = 'GRP-${const Uuid().v4().substring(0, 8).toUpperCase()}';
+
+    final conversation = Conversation(
+      id: groupId,
+      peerInternalNumber: '',
+      peerDisplayName: trimmedName,
+      isGroup: true,
+      memberInternalNumbers: otherMembers,
+      groupOwnerInternalNumber: identity.internalNumber,
+    );
+    conversations.add(conversation);
+    _messagesByConversation[groupId] = [];
+    await _store.conversationsBox.put(groupId, _store.encode(conversation.toMap()));
+    _safeNotify();
+
+    final allMembersIncludingSelf = [identity.internalNumber, ...otherMembers];
+    for (final member in otherMembers) {
+      unawaited(_deliverViaAnyTransport(member, {
+        'type': 'group_invite',
+        // معرّف لإقرار التسليم (ack) فقط — تُبنى دعوة جديدة بنفس المعرّف
+        // لكل عضو تُرسَل له الآن، لا علاقة له بمعرّف الرسائل النصية.
+        'id': const Uuid().v4(),
+        'groupId': groupId,
+        'groupName': trimmedName,
+        'members': allMembersIncludingSelf,
+        'senderInternalNumber': identity.internalNumber,
+      }));
+    }
+
+    return conversation;
+  }
+
+  /// يبني نفس المحادثة الجماعية محليًا لدى عضو مدعوّ حديثًا — أو يُحدِّث
+  /// قائمة الأعضاء إن وصلت دعوة لمجموعة موجودة أصلًا لديه (مثلًا انضم عضو
+  /// جديد لاحقًا وأعاد المنشئ إرسال الدعوة للجميع).
+  void _handleGroupInvite(String senderInternalNumber, Map<String, dynamic> payload) {
+    final groupId = payload['groupId'];
+    final groupName = payload['groupName'];
+    final membersRaw = payload['members'];
+    if (groupId is! String ||
+        !_isSafeIdentifier(groupId) ||
+        groupName is! String ||
+        groupName.trim().isEmpty ||
+        membersRaw is! List) {
+      recordError('دعوة مجموعة', 'حمولة غير صالحة من الشبكة تم تجاهلها');
+      return;
+    }
+
+    final members = membersRaw.whereType<String>().where(_isSafeIdentifier).toSet().toList();
+    // دعوة لا تشملني أصلًا لا معنى لقبولها — إما خطأ أو محاولة تلاعب.
+    if (!members.contains(identity.internalNumber)) {
+      recordError('دعوة مجموعة', 'دعوة مجموعة لا تشملني تم تجاهلها');
+      return;
+    }
+    final otherMembers = members.where((m) => m != identity.internalNumber).toList();
+
+    final existingIndex = conversations.indexWhere((c) => c.id == groupId);
+    if (existingIndex == -1) {
+      final conversation = Conversation(
+        id: groupId,
+        peerInternalNumber: '',
+        peerDisplayName: groupName,
+        isGroup: true,
+        memberInternalNumbers: otherMembers,
+        groupOwnerInternalNumber: senderInternalNumber,
+      );
+      conversations.add(conversation);
+      _messagesByConversation[groupId] = [];
+      unawaited(_store.conversationsBox.put(groupId, _store.encode(conversation.toMap())));
+    } else {
+      final conversation = conversations[existingIndex];
+      conversation.memberInternalNumbers
+        ..clear()
+        ..addAll(otherMembers);
+      unawaited(_store.conversationsBox.put(groupId, _store.encode(conversation.toMap())));
+    }
+    _safeNotify();
+  }
+
+  // ---------------------------------------------------------------------
   // إرسال الرسائل
   // ---------------------------------------------------------------------
 
@@ -554,9 +647,31 @@ class LocalConnectAppState extends ChangeNotifier {
     }
 
     final payload = message.toWirePayload(base64Data: base64Data);
-    message.status = await _deliverViaAnyTransport(conversation.peerInternalNumber, payload);
+    message.status = conversation.isGroup
+        ? await _fanOutToGroup(conversation, payload)
+        : await _deliverViaAnyTransport(conversation.peerInternalNumber, payload);
     await _persistMessage(message);
     _safeNotify();
+  }
+
+  /// يُرسِل نفس الحمولة لكل عضو في مجموعة على حدة (توزيع نجمي بسيط: كل
+  /// جهاز يبعث لكل الأعضاء الآخرين مباشرة بلا خادم وسيط) — يُلحق [Conversation.id]
+  /// كـgroupId لأن الطرف المستقبِل لا يقدر يشتقّه محليًا كحال المحادثات
+  /// الثنائية (لا يوجد "طرفان" فقط لاشتقاق معرّف حتمي منهما).
+  /// delivered فقط إن وصلت للجميع؛ غير ذلك queued لإعادة المحاولة — تكرار
+  /// الإرسال لعضو استلمها فعلًا بالفعل غير ضار لأن جانب الاستقبال يتجاهل
+  /// أي معرّف رسالة مكرَّر.
+  Future<MessageStatus> _fanOutToGroup(Conversation group, Map<String, dynamic> payload) async {
+    if (group.memberInternalNumbers.isEmpty) return MessageStatus.delivered;
+    final groupPayload = {...payload, 'groupId': group.id};
+    var allDelivered = true;
+    for (final member in group.memberInternalNumbers) {
+      final status = await _deliverViaAnyTransport(member, groupPayload);
+      if (status != MessageStatus.delivered && status != MessageStatus.sent) {
+        allDelivered = false;
+      }
+    }
+    return allDelivered ? MessageStatus.delivered : MessageStatus.queued;
   }
 
   /// يجرّب كل وسيلة اتصال متاحة بالترتيب حتى تنجح واحدة: Wi-Fi المكتشَف
@@ -655,13 +770,16 @@ class LocalConnectAppState extends ChangeNotifier {
     _safeNotify();
 
     final conversation = conversations.firstWhere((c) => c.id == conversationId);
-    unawaited(_deliverViaAnyTransport(conversation.peerInternalNumber, {
+    final editPayload = {
       'type': 'edit_message',
       'id': message.id,
       'senderInternalNumber': identity.internalNumber,
       'text': trimmed,
       'editedAt': message.editedAt!.toIso8601String(),
-    }));
+    };
+    unawaited(conversation.isGroup
+        ? _fanOutToGroup(conversation, editPayload)
+        : _deliverViaAnyTransport(conversation.peerInternalNumber, editPayload));
   }
 
   /// حذف "لي فقط": يُزيل الرسالة محليًا نهائيًا بلا أي إخطار للطرف الآخر.
@@ -683,11 +801,14 @@ class LocalConnectAppState extends ChangeNotifier {
       message.isDeleted = true;
       await _persistMessage(message);
       final conversation = conversations.firstWhere((c) => c.id == conversationId);
-      unawaited(_deliverViaAnyTransport(conversation.peerInternalNumber, {
+      final deletePayload = {
         'type': 'delete_message',
         'id': message.id,
         'senderInternalNumber': identity.internalNumber,
-      }));
+      };
+      unawaited(conversation.isGroup
+          ? _fanOutToGroup(conversation, deletePayload)
+          : _deliverViaAnyTransport(conversation.peerInternalNumber, deletePayload));
     } else {
       list.removeAt(index);
       final box = await _store.messagesBoxFor(conversationId);
@@ -729,13 +850,31 @@ class LocalConnectAppState extends ChangeNotifier {
       // كلها تمر من هنا، فحظر شخص يمنعه من مراسلتك **و** الاتصال بك معًا.
       if (blockedInternalNumbers.contains(senderInternalNumber)) return;
 
-      // يُحسَب معرّف المحادثة محليًا دائمًا من رقمَي الطرفين، ولا يُوثَق به
-      // إن أرسله الطرف الآخر ضمن الحمولة — فهو مُشتقّ بشكل حتمي أصلًا (نفس
-      // الحساب يُنتج نفس المعرّف على الطرفين)، وتصديقه من الشبكة كان سيسمح
-      // بحقنه بقيمة تعسفية تُستخدَم لاحقًا كاسم صندوق تخزين ومجلد ملفات.
-      final conversationId = Conversation.idFor(identity.internalNumber, senderInternalNumber);
+      final type = payload['type'];
 
-      switch (payload['type']) {
+      if (type == 'group_invite') {
+        _handleGroupInvite(senderInternalNumber, payload);
+        return;
+      }
+
+      // معرّف المحادثة: لرسائل مجموعة، المُرسِل يحدّده صراحة (groupId) لأنه
+      // لا يمكن اشتقاقه محليًا كحال المحادثات الثنائية (لا يوجد "طرفان" فقط
+      // لحسابه منهما حتميًا) — نتحقق أننا عضو فعلي في تلك المجموعة محليًا
+      // (وصلتنا دعوتها) قبل قبول أي شيء يشير إليها، وإلا فأي جهاز على
+      // الشبكة كان يقدر "يخترع" عضويتنا في مجموعة بمجرّد ادّعاء groupId.
+      // لغير ذلك، يُحسَب معرّف المحادثة محليًا دائمًا من رقمَي الطرفين، ولا
+      // يُوثَق بالقيمة التي قد يُرسِلها الطرف الآخر ضمن الحمولة نفسها.
+      String conversationId;
+      final groupId = payload['groupId'];
+      if (groupId is String && _isSafeIdentifier(groupId)) {
+        final groupMatches = conversations.where((c) => c.id == groupId && c.isGroup);
+        if (groupMatches.isEmpty) return;
+        conversationId = groupId;
+      } else {
+        conversationId = Conversation.idFor(identity.internalNumber, senderInternalNumber);
+      }
+
+      switch (type) {
         case 'edit_message':
           _handleIncomingEdit(conversationId, senderInternalNumber, payload);
           return;
@@ -854,10 +993,16 @@ class LocalConnectAppState extends ChangeNotifier {
     ChatMessage message,
     String? base64Data,
   ) {
-    unawaited(_ensureConversation(
-      internalNumber: senderInternalNumber,
-      displayName: senderInternalNumber,
-    ).then((_) async {
+    // لرسالة مجموعة، المحادثة (بمعرّف groupId) موجودة أصلًا بالضرورة — تحقّق
+    // ذلك جرى في _handleIncomingWire قبل الوصول هنا. استدعاء _ensureConversation
+    // في هذه الحالة كان سيُنشئ محادثة ثنائية زائفة مع المُرسِل (عضو المجموعة)
+    // خطأً، منفصلة تمامًا عن محادثة المجموعة الفعلية.
+    final isKnownGroup = conversations.any((c) => c.id == conversationId && c.isGroup);
+    final ensureFuture = isKnownGroup
+        ? Future<Conversation?>.value()
+        : _ensureConversation(internalNumber: senderInternalNumber, displayName: senderInternalNumber);
+
+    unawaited(ensureFuture.then((_) async {
       final list = _messagesByConversation.putIfAbsent(conversationId, () => []);
       if (list.any((m) => m.id == message.id)) return; // تفادي التكرار
 
@@ -885,9 +1030,11 @@ class LocalConnectAppState extends ChangeNotifier {
       if (conversationId != _activeConversationId) {
         final contactMatches = contacts.where((c) => c.internalNumber == senderInternalNumber);
         final senderName = contactMatches.isEmpty ? senderInternalNumber : contactMatches.first.displayName;
+        final groupMatches = conversations.where((c) => c.id == conversationId && c.isGroup);
+        final notificationTitle = groupMatches.isEmpty ? senderName : '${groupMatches.first.peerDisplayName} • $senderName';
         unawaited(_messageNotifications.showMessageNotification(
           conversationId: conversationId,
-          senderName: senderName,
+          senderName: notificationTitle,
           preview: preview,
         ));
       }
