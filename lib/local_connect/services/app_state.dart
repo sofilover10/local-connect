@@ -19,6 +19,7 @@ import 'call_service.dart';
 import 'device_identity_service.dart';
 import 'lan_discovery_service.dart';
 import 'local_store_service.dart';
+import 'message_notification_service.dart';
 import 'messaging_socket_service.dart';
 import 'phone_contacts_service.dart';
 import 'relay_service.dart';
@@ -44,6 +45,18 @@ class LocalConnectAppState extends ChangeNotifier {
   final LanDiscoveryService discovery = LanDiscoveryService();
   final MessagingSocketService socket;
   final PhoneContactsService _phoneContactsService = PhoneContactsService();
+  final MessageNotificationService _messageNotifications = MessageNotificationService();
+
+  /// معرّف المحادثة المفتوحة حاليًا على الشاشة (إن وُجدت) — تُضبَط من
+  /// ChatScreen. رسالة واردة لهذه المحادثة تحديدًا لا تُظهِر إشعارًا (المستخدم
+  /// يراها مباشرة أصلًا)، بعكس أي محادثة أخرى.
+  String? _activeConversationId;
+  void setActiveConversation(String? conversationId) {
+    _activeConversationId = conversationId;
+    if (conversationId != null) {
+      unawaited(_messageNotifications.cancelMessageNotification(conversationId));
+    }
+  }
 
   /// نقلا بديلان يعملان مباشرة بين جهازين بدون المرور بالراوتر إطلاقًا،
   /// فيتجاوزان أي عزل أجهزة (AP Isolation) قد يفعّله الراوتر على شبكة
@@ -78,6 +91,30 @@ class LocalConnectAppState extends ChangeNotifier {
 
   final List<Contact> contacts = [];
   final List<Conversation> conversations = [];
+
+  /// أرقام داخلية محظورة — تُفحَص عند كل رسالة/إشارة مكالمة واردة (نقطة
+  /// تنفيذ واحدة في [_handleIncomingWire] تغطي الرسائل والمكالمات معًا)،
+  /// وأيضًا عند الإرسال (لمنع إرسال رسالة عرَضية لطرف حظرتَه من قبل).
+  final Set<String> blockedInternalNumbers = {};
+  bool isBlocked(String internalNumber) => blockedInternalNumbers.contains(internalNumber);
+
+  bool _isConversationBlocked(String conversationId) {
+    final matches = conversations.where((c) => c.id == conversationId);
+    if (matches.isEmpty) return false;
+    return blockedInternalNumbers.contains(matches.first.peerInternalNumber);
+  }
+
+  Future<void> blockContact(String internalNumber) async {
+    blockedInternalNumbers.add(internalNumber);
+    await _store.blockedBox.put(internalNumber, DateTime.now().toIso8601String());
+    _safeNotify();
+  }
+
+  Future<void> unblockContact(String internalNumber) async {
+    blockedInternalNumbers.remove(internalNumber);
+    await _store.blockedBox.delete(internalNumber);
+    _safeNotify();
+  }
   final Map<String, List<ChatMessage>> _messagesByConversation = {};
 
   Timer? _retryTimer;
@@ -124,6 +161,7 @@ class LocalConnectAppState extends ChangeNotifier {
 
     await _loadContacts();
     await _loadConversations();
+    blockedInternalNumbers.addAll(_store.blockedBox.keys.cast<String>());
     for (final conversation in conversations) {
       await _loadMessages(conversation.id);
     }
@@ -437,7 +475,7 @@ class LocalConnectAppState extends ChangeNotifier {
 
   Future<void> sendMessage({required String conversationId, required String text}) async {
     final trimmed = text.trim();
-    if (trimmed.isEmpty) return;
+    if (trimmed.isEmpty || _isConversationBlocked(conversationId)) return;
 
     final message = ChatMessage(
       id: const Uuid().v4(),
@@ -465,6 +503,7 @@ class LocalConnectAppState extends ChangeNotifier {
     String? mimeType,
     String? caption,
   }) async {
+    if (_isConversationBlocked(conversationId)) return;
     final file = File(filePath);
     if (!await file.exists()) {
       recordError('إرسال مرفق', 'الملف غير موجود: $filePath');
@@ -685,6 +724,11 @@ class LocalConnectAppState extends ChangeNotifier {
         return;
       }
 
+      // نقطة تنفيذ الحظر الوحيدة: تُسقِط أي شيء من رقم محظور بصمت تام قبل
+      // معالجته — رسائل نصية، تعديل/حذف، وإشارات مكالمات (call_offer...)
+      // كلها تمر من هنا، فحظر شخص يمنعه من مراسلتك **و** الاتصال بك معًا.
+      if (blockedInternalNumbers.contains(senderInternalNumber)) return;
+
       // يُحسَب معرّف المحادثة محليًا دائمًا من رقمَي الطرفين، ولا يُوثَق به
       // إن أرسله الطرف الآخر ضمن الحمولة — فهو مُشتقّ بشكل حتمي أصلًا (نفس
       // الحساب يُنتج نفس المعرّف على الطرفين)، وتصديقه من الشبكة كان سيسمح
@@ -832,15 +876,21 @@ class LocalConnectAppState extends ChangeNotifier {
 
       list.add(message);
       await _persistMessage(message);
-      _updateConversationPreview(
-        conversationId,
-        message,
-        previewOverride: message.kind == MessageKind.voice
-            ? '🎤 رسالة صوتية'
-            : message.kind == MessageKind.file
-                ? '📎 ${message.attachmentFileName ?? message.text}'
-                : null,
-      );
+      final preview = message.kind == MessageKind.voice
+          ? '🎤 رسالة صوتية'
+          : message.kind == MessageKind.file
+              ? '📎 ${message.attachmentFileName ?? message.text}'
+              : message.text;
+      _updateConversationPreview(conversationId, message, previewOverride: preview);
+      if (conversationId != _activeConversationId) {
+        final contactMatches = contacts.where((c) => c.internalNumber == senderInternalNumber);
+        final senderName = contactMatches.isEmpty ? senderInternalNumber : contactMatches.first.displayName;
+        unawaited(_messageNotifications.showMessageNotification(
+          conversationId: conversationId,
+          senderName: senderName,
+          preview: preview,
+        ));
+      }
       _safeNotify();
     }));
   }

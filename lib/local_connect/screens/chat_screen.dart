@@ -9,6 +9,7 @@ import '../app_scope.dart';
 import '../models/call_session.dart';
 import '../models/conversation.dart';
 import '../models/message.dart';
+import '../services/app_state.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/status_dot.dart';
 import 'rename_contact_dialog.dart';
@@ -33,8 +34,25 @@ class _ChatScreenState extends State<ChatScreen> {
   /// معرّف الرسالة قيد التعديل حاليًا، أو null إن كنا نكتب رسالة جديدة.
   String? _editingMessageId;
 
+  /// يُلتقَط في didChangeDependencies (وليس initState، الممنوع فيها استخدام
+  /// AppScope.of) لتفادي إعادة البحث عنه في context عند dispose — وقتها لم
+  /// يعد آمنًا تسجيل اعتماد جديد على InheritedWidget.
+  LocalConnectAppState? _appState;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_appState == null) {
+      _appState = AppScope.of(context);
+      // إعلام AppState أن هذه المحادثة مفتوحة حاليًا، فلا تُظهِر إشعار نظام
+      // لرسالة واردة يراها المستخدم مباشرة أصلًا على الشاشة.
+      _appState!.setActiveConversation(widget.conversation.id);
+    }
+  }
+
   @override
   void dispose() {
+    _appState?.setActiveConversation(null);
     _controller.dispose();
     _scrollController.dispose();
     _recordingTicker?.cancel();
@@ -178,6 +196,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _startCall(BuildContext context, CallMediaType mediaType) async {
     final appState = AppScope.of(context);
+    if (appState.isBlocked(widget.conversation.peerInternalNumber)) return;
     if (appState.callService.currentCall != null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('يوجد مكالمة جارية بالفعل')),
@@ -189,6 +208,29 @@ class _ChatScreenState extends State<ChatScreen> {
       peerDisplayName: widget.conversation.peerDisplayName,
       mediaType: mediaType,
     );
+  }
+
+  Future<void> _toggleBlock(BuildContext context, bool currentlyBlocked) async {
+    final appState = AppScope.of(context);
+    if (currentlyBlocked) {
+      await appState.unblockContact(widget.conversation.peerInternalNumber);
+    } else {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('حظر جهة الاتصال؟'),
+          content: Text(
+            'لن تصلك رسائل أو مكالمات من ${widget.conversation.peerDisplayName} بعد الحظر، ولن تستطيع أنت مراسلته حتى تُلغي الحظر.',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('حظر')),
+          ],
+        ),
+      );
+      if (confirmed != true || !context.mounted) return;
+      await appState.blockContact(widget.conversation.peerInternalNumber);
+    }
   }
 
   Future<void> _toggleArchive(BuildContext context) async {
@@ -209,6 +251,7 @@ class _ChatScreenState extends State<ChatScreen> {
       builder: (context, _) {
         final messages = appState.messagesFor(widget.conversation.id);
         final online = appState.isPeerOnline(widget.conversation.peerInternalNumber);
+        final blocked = appState.isBlocked(widget.conversation.peerInternalNumber);
 
         return Scaffold(
           appBar: AppBar(
@@ -256,6 +299,10 @@ class _ChatScreenState extends State<ChatScreen> {
                   PopupMenuItem(
                     onTap: () => _toggleArchive(context),
                     child: Text(widget.conversation.isArchived ? 'إلغاء أرشفة المحادثة' : 'أرشفة المحادثة'),
+                  ),
+                  PopupMenuItem(
+                    onTap: () => _toggleBlock(context, blocked),
+                    child: Text(blocked ? 'إلغاء حظر جهة الاتصال' : 'حظر جهة الاتصال'),
                   ),
                 ],
               ),
@@ -324,46 +371,66 @@ class _ChatScreenState extends State<ChatScreen> {
                     ],
                   ),
                 ),
-              SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        onPressed:
-                            (_isRecording || _editingMessageId != null) ? null : () => _pickAndSendFile(context),
-                        icon: const Icon(Icons.attach_file),
-                        tooltip: 'إرسال ملف',
-                      ),
-                      Expanded(
-                        child: TextField(
-                          controller: _controller,
-                          enabled: !_isRecording,
-                          textInputAction: TextInputAction.send,
-                          onSubmitted: (_) => _send(context),
-                          decoration: InputDecoration(
-                            hintText: _isRecording ? 'جارٍ تسجيل رسالة صوتية...' : 'اكتب رسالة...',
-                            border: const OutlineInputBorder(
-                                borderRadius: BorderRadius.all(Radius.circular(24))),
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              if (blocked)
+                SafeArea(
+                  child: Container(
+                    width: double.infinity,
+                    color: Theme.of(context).colorScheme.errorContainer,
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: Row(
+                      children: [
+                        const Expanded(
+                          child: Text('حظرتَ جهة الاتصال هذه — لا يمكن إرسال أو استقبال رسائل حتى تُلغي الحظر'),
+                        ),
+                        TextButton(
+                          onPressed: () => _toggleBlock(context, true),
+                          child: const Text('إلغاء الحظر'),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                SafeArea(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          onPressed:
+                              (_isRecording || _editingMessageId != null) ? null : () => _pickAndSendFile(context),
+                          icon: const Icon(Icons.attach_file),
+                          tooltip: 'إرسال ملف',
+                        ),
+                        Expanded(
+                          child: TextField(
+                            controller: _controller,
+                            enabled: !_isRecording,
+                            textInputAction: TextInputAction.send,
+                            onSubmitted: (_) => _send(context),
+                            decoration: InputDecoration(
+                              hintText: _isRecording ? 'جارٍ تسجيل رسالة صوتية...' : 'اكتب رسالة...',
+                              border: const OutlineInputBorder(
+                                  borderRadius: BorderRadius.all(Radius.circular(24))),
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        onPressed: _editingMessageId != null ? null : () => _toggleVoiceRecording(context),
-                        icon: Icon(_isRecording ? Icons.stop_circle : Icons.mic),
-                        color: _isRecording ? Colors.red : null,
-                        tooltip: _isRecording ? 'إيقاف وإرسال الرسالة الصوتية' : 'تسجيل رسالة صوتية',
-                      ),
-                      IconButton.filled(
-                        onPressed: _isRecording ? null : () => _send(context),
-                        icon: Icon(_editingMessageId != null ? Icons.check : Icons.send),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        IconButton(
+                          onPressed: _editingMessageId != null ? null : () => _toggleVoiceRecording(context),
+                          icon: Icon(_isRecording ? Icons.stop_circle : Icons.mic),
+                          color: _isRecording ? Colors.red : null,
+                          tooltip: _isRecording ? 'إيقاف وإرسال الرسالة الصوتية' : 'تسجيل رسالة صوتية',
+                        ),
+                        IconButton.filled(
+                          onPressed: _isRecording ? null : () => _send(context),
+                          icon: Icon(_editingMessageId != null ? Icons.check : Icons.send),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
         );

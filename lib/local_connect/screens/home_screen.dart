@@ -11,6 +11,7 @@ import '../services/app_state.dart';
 import '../widgets/status_dot.dart';
 import 'add_contact_dialog.dart';
 import 'archived_conversations_screen.dart';
+import 'blocked_contacts_screen.dart';
 import 'bluetooth_tab.dart';
 import 'chat_screen.dart';
 import 'diagnostics_screen.dart';
@@ -116,6 +117,12 @@ class HomeScreen extends StatelessWidget {
               onPressed: () =>
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const ArchivedConversationsScreen())),
               icon: const Icon(Icons.archive_outlined),
+            ),
+            IconButton(
+              tooltip: 'المحظورون',
+              onPressed: () =>
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const BlockedContactsScreen())),
+              icon: const Icon(Icons.block),
             ),
             AnimatedBuilder(
               animation: appState,

@@ -23,6 +23,7 @@ class LocalConnectApplication : Application() {
     private val wifiDirectHandler by lazy { WifiDirectHandler(applicationContext) }
     private val bluetoothHandler by lazy { BluetoothClassicHandler(applicationContext) }
     private val ringtoneHandler by lazy { RingtoneHandler(applicationContext) }
+    private val messageNotificationHandler by lazy { MessageNotificationHandler(applicationContext) }
 
     override fun onCreate() {
         super.onCreate()
@@ -78,6 +79,7 @@ class LocalConnectApplication : Application() {
         bluetoothHandler.start()
 
         MethodChannel(messenger, "local_connect/ringtone").setMethodCallHandler(ringtoneHandler)
+        MethodChannel(messenger, "local_connect/notifications").setMethodCallHandler(messageNotificationHandler)
     }
 
     companion object {

@@ -19,17 +19,20 @@ class LocalStoreService {
   late Box<String> identityBox;
   late Box<String> contactsBox;
   late Box<String> conversationsBox;
+  late Box<String> blockedBox;
   final Map<String, Box<String>> _messageBoxes = {};
 
   String get _identityBoxName => '${instanceId}_identity';
   String get _contactsBoxName => '${instanceId}_contacts';
   String get _conversationsBoxName => '${instanceId}_conversations';
+  String get _blockedBoxName => '${instanceId}_blocked';
 
   Future<void> init() async {
     await Hive.initFlutter('local_connect');
     identityBox = await Hive.openBox<String>(_identityBoxName);
     contactsBox = await Hive.openBox<String>(_contactsBoxName);
     conversationsBox = await Hive.openBox<String>(_conversationsBoxName);
+    blockedBox = await Hive.openBox<String>(_blockedBoxName);
   }
 
   Future<Box<String>> messagesBoxFor(String conversationId) async {
