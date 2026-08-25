@@ -14,7 +14,7 @@ class Conversation {
 
   final String id;
   final String peerInternalNumber;
-  final String peerDisplayName;
+  String peerDisplayName;
   String? lastMessagePreview;
   DateTime? lastMessageAt;
 

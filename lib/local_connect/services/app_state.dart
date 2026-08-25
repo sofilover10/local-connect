@@ -315,6 +315,43 @@ class LocalConnectAppState extends ChangeNotifier {
     return _ensureConversation(internalNumber: internalNumber, displayName: displayName);
   }
 
+  /// يعيد تسمية جهة اتصال قائمة بالفعل — يُحدِّث اسمها في قائمة جهات
+  /// الاتصال **وفي عنوان محادثتها** معًا (الاثنان يُخزَّنان منفصلين محليًا؛
+  /// [addContact] وحده لا يُحدِّث اسم محادثة قائمة أصلًا، فيبقى الاسم القديم
+  /// عالقًا في قائمة المحادثات دون هذا التحديث الصريح).
+  Future<void> renameContact(
+    String internalNumber,
+    String newDisplayName, {
+    String? newPhoneNumber,
+  }) async {
+    final trimmed = newDisplayName.trim();
+    if (trimmed.isEmpty) return;
+
+    final contactIndex = contacts.indexWhere((c) => c.internalNumber == internalNumber);
+    if (contactIndex != -1) {
+      final existing = contacts[contactIndex];
+      final updated = Contact(
+        internalNumber: existing.internalNumber,
+        displayName: trimmed,
+        phoneNumber: newPhoneNumber ?? existing.phoneNumber,
+        manualAddress: existing.manualAddress,
+        bluetoothAddress: existing.bluetoothAddress,
+        addedAt: existing.addedAt,
+      );
+      contacts[contactIndex] = updated;
+      await _store.contactsBox.put(internalNumber, _store.encode(updated.toMap()));
+    }
+
+    final conversationIndex = conversations.indexWhere((c) => c.peerInternalNumber == internalNumber);
+    if (conversationIndex != -1) {
+      final conversation = conversations[conversationIndex];
+      conversation.peerDisplayName = trimmed;
+      await _store.conversationsBox.put(conversation.id, _store.encode(conversation.toMap()));
+    }
+
+    _safeNotify();
+  }
+
   /// يحفظ جهة اتصال LocalConnect في دفتر جهات اتصال الهاتف الفعلي (خارج
   /// التطبيق). يعيد true عند النجاح، أو false مع تسجيل السبب في سجل
   /// الأخطاء (رفض الصلاحية غالبًا) ليعرضه الطرف المستدعي للمستخدم.

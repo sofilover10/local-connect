@@ -13,9 +13,17 @@ class CallSoundService {
   Future<void> playRingback() => _invoke('playRingback');
   Future<void> stopRingback() => _invoke('stopRingback');
 
-  Future<void> _invoke(String method) async {
+  /// إشعار بأعلى أولوية مع نيّة "شاشة كاملة" — يظهر اسم المتصل فورًا فوق
+  /// شاشة القفل، حتى لو كانت الشاشة مطفأة أو التطبيق غير مفتوح إطلاقًا وقت
+  /// الاتصال؛ بدونه، صوت الرنين وحده لا يخبر المستخدم مين المتصل قبل أن
+  /// يفتح التطبيق بنفسه يدويًا.
+  Future<void> showIncomingCallNotification(String callerName) =>
+      _invoke('showIncomingCallNotification', {'callerName': callerName});
+  Future<void> cancelIncomingCallNotification() => _invoke('cancelIncomingCallNotification');
+
+  Future<void> _invoke(String method, [Map<String, dynamic>? arguments]) async {
     try {
-      await _channel.invokeMethod(method);
+      await _channel.invokeMethod(method, arguments);
     } catch (_) {
       // لا شيء — منصّات أخرى غير أندرويد (أو أجهزة بلا نغمة افتراضية) تفشل
       // هنا بصمت، ويبقى الاهتزاز والنبض البصري كافيَين كمؤشر.

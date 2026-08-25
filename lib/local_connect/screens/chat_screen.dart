@@ -11,6 +11,7 @@ import '../models/conversation.dart';
 import '../models/message.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/status_dot.dart';
+import 'rename_contact_dialog.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.conversation});
@@ -244,6 +245,10 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
               PopupMenuButton<void>(
                 itemBuilder: (context) => [
+                  PopupMenuItem(
+                    onTap: () => showRenameContactDialog(context, widget.conversation),
+                    child: const Text('إعادة تسمية جهة الاتصال'),
+                  ),
                   PopupMenuItem(
                     onTap: () => _saveToPhoneContacts(context),
                     child: const Text('حفظ في جهات اتصال الهاتف'),

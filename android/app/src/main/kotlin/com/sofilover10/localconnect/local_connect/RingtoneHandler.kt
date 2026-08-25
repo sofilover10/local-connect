@@ -1,12 +1,18 @@
 package com.sofilover10.localconnect.local_connect
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.media.AudioManager
 import android.media.Ringtone
 import android.media.RingtoneManager
 import android.media.ToneGenerator
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import androidx.core.app.NotificationCompat
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
@@ -40,8 +46,65 @@ class RingtoneHandler(private val context: Context) : MethodChannel.MethodCallHa
                 stopRingback()
                 result.success(null)
             }
+            "showIncomingCallNotification" -> {
+                val callerName = call.argument<String>("callerName") ?: "مكالمة واردة"
+                showIncomingCallNotification(callerName)
+                result.success(null)
+            }
+            "cancelIncomingCallNotification" -> {
+                cancelIncomingCallNotification()
+                result.success(null)
+            }
             else -> result.notImplemented()
         }
+    }
+
+    /// إشعار بأعلى أولوية مع نيّة "شاشة كاملة" (full-screen intent) — هذا ما
+    /// يجعل اسم المتصل يظهر فعليًا حتى لو كانت الشاشة مقفلة أو التطبيق غير
+    /// مفتوح إطلاقًا؛ بدونه، صوت الرنين (playRingtone) يعمل لكن لا يوجد أي
+    /// مؤشر بصري لمن يتصل قبل أن يفتح المستخدم التطبيق بنفسه يدويًا.
+    private fun showIncomingCallNotification(callerName: String) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CALL_CHANNEL_ID,
+                "مكالمات واردة",
+                NotificationManager.IMPORTANCE_HIGH,
+            )
+            manager.createNotificationChannel(channel)
+        }
+
+        val fullScreenIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(MainActivity.EXTRA_INCOMING_CALL, true)
+        }
+        val fullScreenPendingIntent = PendingIntent.getActivity(
+            context,
+            0,
+            fullScreenIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
+        val notification = NotificationCompat.Builder(context, CALL_CHANNEL_ID)
+            .setContentTitle("مكالمة واردة")
+            .setContentText(callerName)
+            .setSmallIcon(android.R.drawable.sym_call_incoming)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setFullScreenIntent(fullScreenPendingIntent, true)
+            .setContentIntent(fullScreenPendingIntent)
+            .setAutoCancel(true)
+            .setOngoing(true)
+            .build()
+
+        manager.notify(CALL_NOTIFICATION_ID, notification)
+    }
+
+    private fun cancelIncomingCallNotification() {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.cancel(CALL_NOTIFICATION_ID)
     }
 
     private fun playRingtone() {
@@ -107,8 +170,8 @@ class RingtoneHandler(private val context: Context) : MethodChannel.MethodCallHa
         toneGenerator = null
     }
 
-    fun stop() {
-        stopRingtone()
-        stopRingback()
+    companion object {
+        private const val CALL_CHANNEL_ID = "local_connect_incoming_call"
+        private const val CALL_NOTIFICATION_ID = 2
     }
 }

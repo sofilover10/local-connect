@@ -179,6 +179,7 @@ class CallService extends ChangeNotifier {
     _pendingOfferSdp = sdp;
     _startRingTimeout();
     unawaited(_sound.playRingtone());
+    unawaited(_sound.showIncomingCallNotification(currentCall!.peerDisplayName));
     _safeNotify();
   }
 
@@ -191,6 +192,7 @@ class CallService extends ChangeNotifier {
     if (call == null || call.direction != CallDirection.incoming || sdp == null) return;
     _cancelRingTimeout();
     unawaited(_sound.stopRingtone());
+    unawaited(_sound.cancelIncomingCallNotification());
     call.state = CallState.connecting;
     _safeNotify();
 
@@ -407,6 +409,7 @@ class CallService extends ChangeNotifier {
     _cancelRingTimeout();
     unawaited(_sound.stopRingtone());
     unawaited(_sound.stopRingback());
+    unawaited(_sound.cancelIncomingCallNotification());
     if (call != null && notifyPeer && call.state != CallState.ended) {
       unawaited(_sendSignal(call.peerInternalNumber, {
         'type': 'call_end',
