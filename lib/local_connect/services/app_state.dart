@@ -562,6 +562,118 @@ class LocalConnectAppState extends ChangeNotifier {
     _safeNotify();
   }
 
+  /// يضيف عضوًا جديدًا لمجموعة قائمة — يقتصر على مالك المجموعة (منشئها)
+  /// في هذه النسخة، لعدم وجود صلاحيات إدارية متدرّجة بعد. يُرسِل دعوة كاملة
+  /// للعضو الجديد، ويُبلِغ بقية الأعضاء بالقائمة المُحدَّثة.
+  Future<void> addGroupMember(String groupId, String newMemberInternalNumber) async {
+    final index = conversations.indexWhere((c) => c.id == groupId && c.isGroup);
+    if (index == -1) return;
+    final group = conversations[index];
+    if (group.groupOwnerInternalNumber != identity.internalNumber) return;
+    if (group.memberInternalNumbers.contains(newMemberInternalNumber)) return;
+
+    group.memberInternalNumbers.add(newMemberInternalNumber);
+    await _store.conversationsBox.put(groupId, _store.encode(group.toMap()));
+    _safeNotify();
+
+    final allMembers = [identity.internalNumber, ...group.memberInternalNumbers];
+    unawaited(_deliverViaAnyTransport(newMemberInternalNumber, {
+      'type': 'group_invite',
+      'id': const Uuid().v4(),
+      'groupId': groupId,
+      'groupName': group.peerDisplayName,
+      'members': allMembers,
+      'senderInternalNumber': identity.internalNumber,
+    }));
+    for (final member in group.memberInternalNumbers.where((m) => m != newMemberInternalNumber)) {
+      unawaited(_deliverViaAnyTransport(member, {
+        'type': 'group_member_update',
+        'id': const Uuid().v4(),
+        'groupId': groupId,
+        'members': allMembers,
+        'senderInternalNumber': identity.internalNumber,
+      }));
+    }
+  }
+
+  /// يزيل عضوًا من مجموعة — للمالك فقط أيضًا. يُبلَّغ العضو المُزال بقائمة
+  /// أعضاء لا تتضمنه، فيحذف المحادثة محليًا لديه تلقائيًا (نفس آلية
+  /// [_handleGroupMemberUpdate] التي تتعامل مع المغادرة الطوعية أيضًا).
+  Future<void> removeGroupMember(String groupId, String memberInternalNumber) async {
+    final index = conversations.indexWhere((c) => c.id == groupId && c.isGroup);
+    if (index == -1) return;
+    final group = conversations[index];
+    if (group.groupOwnerInternalNumber != identity.internalNumber) return;
+    if (!group.memberInternalNumbers.remove(memberInternalNumber)) return;
+    await _store.conversationsBox.put(groupId, _store.encode(group.toMap()));
+    _safeNotify();
+
+    final remainingMembers = [identity.internalNumber, ...group.memberInternalNumbers];
+    for (final member in [...group.memberInternalNumbers, memberInternalNumber]) {
+      unawaited(_deliverViaAnyTransport(member, {
+        'type': 'group_member_update',
+        'id': const Uuid().v4(),
+        'groupId': groupId,
+        'members': remainingMembers,
+        'senderInternalNumber': identity.internalNumber,
+      }));
+    }
+  }
+
+  /// يغادر عضو (أي عضو، بما فيه المالك) مجموعة بنفسه. لا يوجد نقل ملكية
+  /// تلقائي إن غادر المالك — تبقى المجموعة بلا مالك لدى البقية، فتُعطَّل
+  /// إضافة/إزالة الأعضاء فيها إلى أن تُبنى هذه الميزة لاحقًا.
+  Future<void> leaveGroup(String groupId) async {
+    final index = conversations.indexWhere((c) => c.id == groupId && c.isGroup);
+    if (index == -1) return;
+    final group = conversations[index];
+    final remainingMembers = List<String>.from(group.memberInternalNumbers);
+
+    conversations.removeAt(index);
+    _messagesByConversation.remove(groupId);
+    await _store.conversationsBox.delete(groupId);
+    _safeNotify();
+
+    for (final member in remainingMembers) {
+      unawaited(_deliverViaAnyTransport(member, {
+        'type': 'group_member_update',
+        'id': const Uuid().v4(),
+        'groupId': groupId,
+        'members': remainingMembers,
+        'senderInternalNumber': identity.internalNumber,
+      }));
+    }
+  }
+
+  /// يُحدِّث قائمة أعضاء مجموعة قائمة أصلًا لدينا (إضافة/إزالة/مغادرة عضو)،
+  /// أو يحذفها محليًا إن لم يعد رقمي ضمن القائمة الجديدة (تمت إزالتي، أو
+  /// غادرتُ من جهاز آخر يشارك نفس الهوية).
+  void _handleGroupMemberUpdate(Map<String, dynamic> payload) {
+    final groupId = payload['groupId'];
+    final membersRaw = payload['members'];
+    if (groupId is! String || !_isSafeIdentifier(groupId) || membersRaw is! List) return;
+
+    final index = conversations.indexWhere((c) => c.id == groupId && c.isGroup);
+    if (index == -1) return; // لسنا عضوًا في هذه المجموعة أصلًا لدينا
+
+    final members = membersRaw.whereType<String>().where(_isSafeIdentifier).toSet().toList();
+    if (!members.contains(identity.internalNumber)) {
+      conversations.removeAt(index);
+      _messagesByConversation.remove(groupId);
+      unawaited(_store.conversationsBox.delete(groupId));
+      _safeNotify();
+      return;
+    }
+
+    final conversation = conversations[index];
+    final otherMembers = members.where((m) => m != identity.internalNumber).toList();
+    conversation.memberInternalNumbers
+      ..clear()
+      ..addAll(otherMembers);
+    unawaited(_store.conversationsBox.put(groupId, _store.encode(conversation.toMap())));
+    _safeNotify();
+  }
+
   // ---------------------------------------------------------------------
   // إرسال الرسائل
   // ---------------------------------------------------------------------
@@ -854,6 +966,10 @@ class LocalConnectAppState extends ChangeNotifier {
 
       if (type == 'group_invite') {
         _handleGroupInvite(senderInternalNumber, payload);
+        return;
+      }
+      if (type == 'group_member_update') {
+        _handleGroupMemberUpdate(payload);
         return;
       }
 

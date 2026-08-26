@@ -12,6 +12,7 @@ import '../models/message.dart';
 import '../services/app_state.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/status_dot.dart';
+import 'group_info_screen.dart';
 import 'rename_contact_dialog.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -285,7 +286,16 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
             actions: [
-              if (!isGroup) ...[
+              if (isGroup)
+                IconButton(
+                  icon: const Icon(Icons.info_outline),
+                  tooltip: 'معلومات المجموعة',
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => GroupInfoScreen(conversation: widget.conversation)),
+                  ),
+                )
+              else ...[
                 IconButton(
                   icon: const Icon(Icons.call),
                   tooltip: 'اتصال صوتي',
