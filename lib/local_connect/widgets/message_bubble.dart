@@ -15,6 +15,7 @@ class MessageBubble extends StatelessWidget {
     this.senderLabel,
     this.myInternalNumber,
     this.onVote,
+    this.onRsvp,
   });
 
   final ChatMessage message;
@@ -34,6 +35,9 @@ class MessageBubble extends StatelessWidget {
   /// يُستدعى عند الضغط على خيار في استطلاع (فهرس الخيار). null لرسالة غير
   /// استطلاع.
   final void Function(int optionIndex)? onVote;
+
+  /// يُستدعى عند الرد على دعوة فعالية. null لرسالة غير فعالية.
+  final void Function(EventRsvpStatus status)? onRsvp;
 
   bool get _hasActions => onEdit != null || onDeleteForMe != null || onDeleteForEveryone != null;
 
@@ -172,6 +176,13 @@ class MessageBubble extends StatelessWidget {
           textColor: textColor,
           myInternalNumber: myInternalNumber,
           onVote: onVote,
+        );
+      case MessageKind.event:
+        return _EventContent(
+          message: message,
+          textColor: textColor,
+          myInternalNumber: myInternalNumber,
+          onRsvp: onRsvp,
         );
     }
   }
@@ -315,6 +326,93 @@ class _PollOptionRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _EventContent extends StatelessWidget {
+  const _EventContent({
+    required this.message,
+    required this.textColor,
+    required this.myInternalNumber,
+    required this.onRsvp,
+  });
+
+  final ChatMessage message;
+  final Color textColor;
+  final String? myInternalNumber;
+  final void Function(EventRsvpStatus status)? onRsvp;
+
+  static const _labels = {
+    EventRsvpStatus.going: 'سأحضر',
+    EventRsvpStatus.maybe: 'ربما',
+    EventRsvpStatus.declined: 'لن أحضر',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final rsvps = message.eventRsvps ?? const {};
+    final myStatusName = myInternalNumber == null ? null : rsvps[myInternalNumber];
+    final myStatus = EventRsvpStatus.values.where((s) => s.name == myStatusName);
+    final goingCount = rsvps.values.where((v) => v == EventRsvpStatus.going.name).length;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.event, size: 16, color: textColor.withValues(alpha: 0.8)),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                message.text,
+                style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        if (message.eventDateTime != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            DateFormat('EEEE، d MMMM y — HH:mm', 'ar').format(message.eventDateTime!),
+            style: TextStyle(color: textColor.withValues(alpha: 0.85), fontSize: 12),
+          ),
+        ],
+        if (message.eventLocation != null) ...[
+          const SizedBox(height: 2),
+          Row(
+            children: [
+              Icon(Icons.place_outlined, size: 14, color: textColor.withValues(alpha: 0.7)),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  message.eventLocation!,
+                  style: TextStyle(color: textColor.withValues(alpha: 0.85), fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 8),
+        if (onRsvp != null)
+          Wrap(
+            spacing: 6,
+            children: [
+              for (final status in EventRsvpStatus.values)
+                ChoiceChip(
+                  label: Text(_labels[status]!),
+                  selected: myStatus.isNotEmpty && myStatus.first == status,
+                  onSelected: (_) => onRsvp!(status),
+                ),
+            ],
+          ),
+        const SizedBox(height: 4),
+        Text(
+          goingCount == 0 ? 'لا أحد أكّد الحضور بعد' : '$goingCount سيحضرون',
+          style: TextStyle(fontSize: 11, color: textColor.withValues(alpha: 0.7)),
+        ),
+      ],
     );
   }
 }

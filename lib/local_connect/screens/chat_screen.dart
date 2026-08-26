@@ -171,6 +171,14 @@ class _ChatScreenState extends State<ChatScreen> {
                 _showCreatePollDialog(context);
               },
             ),
+            ListTile(
+              leading: const Icon(Icons.event),
+              title: const Text('فعالية'),
+              onTap: () {
+                Navigator.pop(context);
+                _showCreateEventDialog(context);
+              },
+            ),
           ],
         ),
       ),
@@ -228,6 +236,79 @@ class _ChatScreenState extends State<ChatScreen> {
       conversationId: widget.conversation.id,
       question: questionController.text,
       options: optionControllers.map((c) => c.text).toList(),
+    );
+    _scrollToBottom();
+  }
+
+  Future<void> _showCreateEventDialog(BuildContext context) async {
+    final titleController = TextEditingController();
+    final locationController = TextEditingController();
+    var dateTime = DateTime.now().add(const Duration(hours: 1));
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('فعالية جديدة'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: titleController,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: 'عنوان الفعالية'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: locationController,
+                  decoration: const InputDecoration(labelText: 'المكان (اختياري)'),
+                ),
+                const SizedBox(height: 12),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    icon: const Icon(Icons.schedule),
+                    label: Text(
+                      '${dateTime.year}/${dateTime.month}/${dateTime.day} — '
+                      '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}',
+                    ),
+                    onPressed: () async {
+                      final date = await showDatePicker(
+                        context: context,
+                        initialDate: dateTime,
+                        firstDate: DateTime.now().subtract(const Duration(days: 1)),
+                        lastDate: DateTime.now().add(const Duration(days: 3650)),
+                      );
+                      if (date == null || !context.mounted) return;
+                      final time = await showTimePicker(
+                        context: context,
+                        initialTime: TimeOfDay.fromDateTime(dateTime),
+                      );
+                      if (time == null) return;
+                      setState(() {
+                        dateTime = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+                      });
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('إنشاء')),
+          ],
+        ),
+      ),
+    );
+
+    if (result != true || !context.mounted) return;
+    await AppScope.of(context).sendEvent(
+      conversationId: widget.conversation.id,
+      title: titleController.text,
+      dateTime: dateTime,
+      location: locationController.text,
     );
     _scrollToBottom();
   }
@@ -476,6 +557,13 @@ class _ChatScreenState extends State<ChatScreen> {
                                       conversationId: widget.conversation.id,
                                       messageId: message.id,
                                       optionIndex: optionIndex,
+                                    )
+                                : null,
+                            onRsvp: message.kind == MessageKind.event
+                                ? (status) => appState.respondToEvent(
+                                      conversationId: widget.conversation.id,
+                                      messageId: message.id,
+                                      status: status,
                                     )
                                 : null,
                             onEdit: message.outgoing && message.kind == MessageKind.text

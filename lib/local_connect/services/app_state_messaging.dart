@@ -162,6 +162,91 @@ extension MessagingExtension on LocalConnectAppState {
     _safeNotify();
   }
 
+  /// ينشئ فعالية (اجتماع/موعد) في محادثة — [text] يحمل عنوانها.
+  Future<void> sendEvent({
+    required String conversationId,
+    required String title,
+    required DateTime dateTime,
+    String? location,
+  }) async {
+    final trimmedTitle = title.trim();
+    if (trimmedTitle.isEmpty ||
+        _isConversationBlocked(conversationId) ||
+        !_canPostToConversation(conversationId)) {
+      return;
+    }
+    final trimmedLocation = location?.trim();
+
+    final message = ChatMessage(
+      id: const Uuid().v4(),
+      conversationId: conversationId,
+      senderInternalNumber: identity.internalNumber,
+      text: trimmedTitle,
+      sentAt: DateTime.now(),
+      outgoing: true,
+      kind: MessageKind.event,
+      eventDateTime: dateTime,
+      eventLocation: (trimmedLocation == null || trimmedLocation.isEmpty) ? null : trimmedLocation,
+    );
+
+    _messagesByConversation.putIfAbsent(conversationId, () => []).add(message);
+    await _persistMessage(message);
+    _updateConversationPreview(conversationId, message, previewOverride: '📅 $trimmedTitle');
+    _safeNotify();
+
+    await _attemptDelivery(message);
+  }
+
+  /// يردّ (أو يغيّر رده) على دعوة فعالية — رد واحد فقط لكل شخص، يُحدَّث
+  /// محليًا فورًا ثم يُرسَل التحديث الكامل لبقية الأطراف، بنفس منطق
+  /// [voteInPoll] وللسبب نفسه: تفادي تعارض ردود متزامنة تقريبًا.
+  Future<void> respondToEvent({
+    required String conversationId,
+    required String messageId,
+    required EventRsvpStatus status,
+  }) async {
+    final list = _messagesByConversation[conversationId];
+    final index = list?.indexWhere((m) => m.id == messageId) ?? -1;
+    if (list == null || index == -1) return;
+
+    final message = list[index];
+    if (message.kind != MessageKind.event) return;
+
+    final rsvps = message.eventRsvps ?? {};
+    rsvps[identity.internalNumber] = status.name;
+    message.eventRsvps = rsvps;
+    await _persistMessage(message);
+    _safeNotify();
+
+    final conversation = conversations.firstWhere((c) => c.id == conversationId);
+    final rsvpPayload = {
+      'type': 'event_rsvp',
+      'id': message.id,
+      'senderInternalNumber': identity.internalNumber,
+      'eventRsvps': rsvps,
+    };
+    unawaited(conversation.isGroup
+        ? _fanOutToGroup(conversation, rsvpPayload)
+        : _deliverViaAnyTransport(conversation.peerInternalNumber, rsvpPayload));
+  }
+
+  void _handleIncomingEventRsvp(String conversationId, Map<String, dynamic> payload) {
+    final id = payload['id'];
+    final rsvpsRaw = payload['eventRsvps'];
+    if (id is! String || rsvpsRaw is! Map) return;
+
+    final list = _messagesByConversation[conversationId];
+    final messageIndex = list?.indexWhere((m) => m.id == id) ?? -1;
+    if (list == null || messageIndex == -1) return;
+
+    final message = list[messageIndex];
+    if (message.kind != MessageKind.event) return;
+
+    message.eventRsvps = rsvpsRaw.map((key, value) => MapEntry(key as String, value as String));
+    unawaited(_persistMessage(message));
+    _safeNotify();
+  }
+
   Future<void> _attemptDelivery(ChatMessage message) async {
     final conversation = conversations.firstWhere((c) => c.id == message.conversationId);
 

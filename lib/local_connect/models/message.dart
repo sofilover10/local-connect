@@ -1,6 +1,9 @@
 enum MessageStatus { queued, sent, delivered, failed }
 
-enum MessageKind { text, file, voice, poll }
+enum MessageKind { text, file, voice, poll, event }
+
+/// حالة الرد على دعوة فعالية — مفتاح [ChatMessage.eventRsvps].
+enum EventRsvpStatus { going, maybe, declined }
 
 class ChatMessage {
   ChatMessage({
@@ -20,10 +23,14 @@ class ChatMessage {
     this.isDeleted = false,
     this.pollOptions,
     Map<String, List<String>>? pollVotes,
-  }) : pollVotes = pollVotes ??
+    this.eventDateTime,
+    this.eventLocation,
+    Map<String, String>? eventRsvps,
+  })  : pollVotes = pollVotes ??
             (pollOptions == null
                 ? null
-                : {for (var i = 0; i < pollOptions.length; i++) '$i': <String>[]});
+                : {for (var i = 0; i < pollOptions.length; i++) '$i': <String>[]}),
+        eventRsvps = eventRsvps ?? (eventDateTime == null ? null : {});
 
   final String id;
   final String conversationId;
@@ -67,6 +74,18 @@ class ChatMessage {
   /// AppState.voteInPoll.
   Map<String, List<String>>? pollVotes;
 
+  /// موعد الفعالية — [text] يحمل عنوانها لرسائل النوع event. null لأي
+  /// نوع رسالة آخر.
+  final DateTime? eventDateTime;
+
+  /// مكان الفعالية (اختياري) — نص حر لرسائل النوع event فقط.
+  final String? eventLocation;
+
+  /// ردود دعوة الفعالية: مفتاح الخريطة هو الرقم الداخلي للمدعو، والقيمة
+  /// اسم [EventRsvpStatus] (going/maybe/declined). رد واحد فقط لكل شخص
+  /// (يُستبدَل تلقائيًا عند تغيير رده)؛ راجع AppState.respondToEvent.
+  Map<String, String>? eventRsvps;
+
   Map<String, dynamic> toMap() => {
         'id': id,
         'conversationId': conversationId,
@@ -84,6 +103,9 @@ class ChatMessage {
         'isDeleted': isDeleted,
         'pollOptions': pollOptions,
         'pollVotes': pollVotes,
+        'eventDateTime': eventDateTime?.toIso8601String(),
+        'eventLocation': eventLocation,
+        'eventRsvps': eventRsvps,
       };
 
   factory ChatMessage.fromMap(Map<String, dynamic> map) => ChatMessage(
@@ -104,6 +126,10 @@ class ChatMessage {
         pollOptions: (map['pollOptions'] as List<dynamic>?)?.cast<String>(),
         pollVotes: (map['pollVotes'] as Map<String, dynamic>?)
             ?.map((key, value) => MapEntry(key, (value as List<dynamic>).cast<String>())),
+        eventDateTime:
+            map['eventDateTime'] == null ? null : DateTime.parse(map['eventDateTime'] as String),
+        eventLocation: map['eventLocation'] as String?,
+        eventRsvps: (map['eventRsvps'] as Map<String, dynamic>?)?.cast<String, String>(),
       );
 
   /// الحمولة المُرسَلة فعليًا عبر مقبس TCP بين الجهازين. المرفقات تُرسَل
@@ -127,6 +153,9 @@ class ChatMessage {
     if (base64Data != null) payload['data'] = base64Data;
     if (pollOptions != null) payload['pollOptions'] = pollOptions;
     if (pollVotes != null) payload['pollVotes'] = pollVotes;
+    if (eventDateTime != null) payload['eventDateTime'] = eventDateTime!.toIso8601String();
+    if (eventLocation != null) payload['eventLocation'] = eventLocation;
+    if (eventRsvps != null) payload['eventRsvps'] = eventRsvps;
     return payload;
   }
 }

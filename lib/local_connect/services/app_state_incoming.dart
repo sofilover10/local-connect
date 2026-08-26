@@ -70,6 +70,9 @@ extension IncomingWireExtension on LocalConnectAppState {
         case 'poll_vote':
           _handleIncomingPollVote(conversationId, payload);
           return;
+        case 'event_rsvp':
+          _handleIncomingEventRsvp(conversationId, payload);
+          return;
         case 'status_post':
           _handleIncomingStatusPost(senderInternalNumber, payload);
           return;
@@ -133,6 +136,11 @@ extension IncomingWireExtension on LocalConnectAppState {
       pollOptions: (payload['pollOptions'] as List<dynamic>?)?.cast<String>(),
       pollVotes: (payload['pollVotes'] as Map<String, dynamic>?)
           ?.map((key, value) => MapEntry(key, (value as List<dynamic>).cast<String>())),
+      eventDateTime: payload['eventDateTime'] == null
+          ? null
+          : DateTime.tryParse(payload['eventDateTime'] as String),
+      eventLocation: payload['eventLocation'] as String?,
+      eventRsvps: (payload['eventRsvps'] as Map<String, dynamic>?)?.cast<String, String>(),
     );
 
     _handleValidIncomingMessage(conversationId, senderInternalNumber, message, base64Data);
@@ -244,7 +252,9 @@ extension IncomingWireExtension on LocalConnectAppState {
               ? '📎 ${message.attachmentFileName ?? message.text}'
               : message.kind == MessageKind.poll
                   ? '📊 ${message.text}'
-                  : message.text;
+                  : message.kind == MessageKind.event
+                      ? '📅 ${message.text}'
+                      : message.text;
       _updateConversationPreview(conversationId, message, previewOverride: preview);
       if (conversationId != _activeConversationId) {
         final contactMatches = contacts.where((c) => c.internalNumber == senderInternalNumber);
