@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -137,14 +138,42 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _pickAndSendFile(BuildContext context) async {
-    final result = await FilePicker.platform.pickFiles();
-    final path = result?.files.single.path;
-    if (path == null || !context.mounted) return;
-    await AppScope.of(context).sendAttachment(
+    // withData: true يجعل الحزمة تُرجِع بايتات الملف مباشرة، وليس فقط مسارًا
+    // — بعض المصادر (Google Drive، وثائق سحابية أخرى عبر SAF) لا تُرجِع
+    // مسار ملف حقيقي في نظام الملفات يقدر dart:io قراءته لاحقًا، فتفشل
+    // sendAttachment بصمت رغم أن الاختيار نفسه نجح. البايتات تعمل دائمًا
+    // بصرف النظر عن المصدر.
+    final result = await FilePicker.platform.pickFiles(withData: true);
+    if (!context.mounted || result == null) return;
+    final picked = result.files.single;
+
+    String? path = picked.path;
+    if (path == null || !await File(path).exists()) {
+      final bytes = picked.bytes;
+      if (bytes == null) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذّر الوصول لهذا الملف — جرّب اختيار ملف من التخزين المحلي مباشرة')),
+        );
+        return;
+      }
+      final tempDir = await getTemporaryDirectory();
+      final tempFile = File('${tempDir.path}/${DateTime.now().millisecondsSinceEpoch}_${picked.name}');
+      await tempFile.writeAsBytes(bytes);
+      path = tempFile.path;
+    }
+
+    if (!context.mounted) return;
+    final sent = await AppScope.of(context).sendAttachment(
       conversationId: widget.conversation.id,
       filePath: path,
       kind: MessageKind.file,
     );
+    if (!sent && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذّر إرسال الملف — تحقق من شاشة "فحص الأخطاء" للتفاصيل')),
+      );
+    }
     _scrollToBottom();
   }
 

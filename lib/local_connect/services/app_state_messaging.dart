@@ -28,18 +28,21 @@ extension MessagingExtension on LocalConnectAppState {
 
   /// إرسال ملف (أي نوع) أو رسالة صوتية موجودة مسبقًا كملف على القرص —
   /// [filePath] هو مسار الملف الأصلي (من منتقي الملفات أو من مسجّل الصوت).
-  Future<void> sendAttachment({
+  /// يعيد true إن أُنشئت الرسالة فعليًا (بصرف النظر عن نجاح التسليم لاحقًا،
+  /// الذي يُعاد المحاولة فيه تلقائيًا)، أو false إن رُفض الملف نفسه فورًا —
+  /// حتى تقدر الشاشة تعرض تنبيهًا واضحًا للمستخدم بدل فشل صامت تمامًا.
+  Future<bool> sendAttachment({
     required String conversationId,
     required String filePath,
     required MessageKind kind,
     String? mimeType,
     String? caption,
   }) async {
-    if (_isConversationBlocked(conversationId) || !_canPostToConversation(conversationId)) return;
+    if (_isConversationBlocked(conversationId) || !_canPostToConversation(conversationId)) return false;
     final file = File(filePath);
     if (!await file.exists()) {
-      recordError('إرسال مرفق', 'الملف غير موجود: $filePath');
-      return;
+      recordError('إرسال مرفق', 'الملف غير موجود أو غير قابل للقراءة: $filePath');
+      return false;
     }
     final fileName = filePath.split(Platform.pathSeparator).last;
     final sizeBytes = await file.length();
@@ -68,6 +71,7 @@ extension MessagingExtension on LocalConnectAppState {
     _safeNotify();
 
     await _attemptDelivery(message);
+    return true;
   }
 
   /// ينشئ استطلاعًا برأي واحد لكل شخص (لا خيارات متعددة في هذه النسخة).

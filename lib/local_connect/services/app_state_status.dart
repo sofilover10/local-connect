@@ -4,16 +4,18 @@ part of 'app_state.dart';
 extension StatusExtension on LocalConnectAppState {
   /// ينشر حالة جديدة (نص أو مرفق) ويبثّها لكل جهات الاتصال مباشرة — لا
   /// خادم مركزي يحتفظ بها؛ كل جهاز يحمل نسخته الخاصة من كل حالة وصلته.
-  Future<void> postStatus({String? text, String? filePath, StatusKind kind = StatusKind.text}) async {
+  /// يعيد false إن رُفض النشر فورًا (نص فارغ أو ملف غير قابل للقراءة) حتى
+  /// تقدر الشاشة تعرض تنبيهًا واضحًا بدل فشل صامت تمامًا.
+  Future<bool> postStatus({String? text, String? filePath, StatusKind kind = StatusKind.text}) async {
     final trimmedText = text?.trim();
-    if (kind == StatusKind.text && (trimmedText == null || trimmedText.isEmpty)) return;
+    if (kind == StatusKind.text && (trimmedText == null || trimmedText.isEmpty)) return false;
 
     String? attachmentFileName;
     String? base64Data;
     if (kind != StatusKind.text) {
       if (filePath == null || !await File(filePath).exists()) {
-        recordError('نشر حالة', 'الملف غير موجود: $filePath');
-        return;
+        recordError('نشر حالة', 'الملف غير موجود أو غير قابل للقراءة: $filePath');
+        return false;
       }
       attachmentFileName = filePath.split(Platform.pathSeparator).last;
       base64Data = base64Encode(await File(filePath).readAsBytes());
@@ -48,6 +50,7 @@ extension StatusExtension on LocalConnectAppState {
     for (final contact in contacts) {
       unawaited(_deliverViaAnyTransport(contact.internalNumber, payload));
     }
+    return true;
   }
 
   void _handleIncomingStatusPost(String senderInternalNumber, Map<String, dynamic> payload) {

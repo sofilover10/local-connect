@@ -1,6 +1,9 @@
+import 'dart:io';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../models/status_post.dart';
 import '../services/app_state.dart';
@@ -56,16 +59,47 @@ class StatusTab extends StatelessWidget {
       ),
     );
     if (result != true || !context.mounted) return;
-    await appState.postStatus(text: controller.text, kind: StatusKind.text);
+    final posted = await appState.postStatus(text: controller.text, kind: StatusKind.text);
+    if (!posted && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذّر نشر الحالة')),
+      );
+    }
   }
 
   Future<void> _postFileStatus(BuildContext context) async {
-    final result = await FilePicker.platform.pickFiles(type: FileType.media);
-    final path = result?.files.single.path;
-    if (path == null || !context.mounted) return;
+    // withData: true تحسّبًا لمصدر لا يُرجِع مسار ملف حقيقي (راجع نفس
+    // المنطق والتعليق في ChatScreen._pickAndSendFile).
+    final result = await FilePicker.platform.pickFiles(type: FileType.media, withData: true);
+    if (!context.mounted || result == null) return;
+    final picked = result.files.single;
+
+    String? path = picked.path;
+    if (path == null || !await File(path).exists()) {
+      final bytes = picked.bytes;
+      if (bytes == null) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذّر الوصول لهذا الملف — جرّب اختيار ملف من التخزين المحلي مباشرة')),
+        );
+        return;
+      }
+      final tempDir = await getTemporaryDirectory();
+      final tempFile = File('${tempDir.path}/${DateTime.now().millisecondsSinceEpoch}_${picked.name}');
+      await tempFile.writeAsBytes(bytes);
+      path = tempFile.path;
+    }
+
+    if (!context.mounted) return;
     final isImage = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
-        .any((ext) => path.toLowerCase().endsWith(ext));
-    await appState.postStatus(filePath: path, kind: isImage ? StatusKind.image : StatusKind.file);
+        .any((ext) => path!.toLowerCase().endsWith(ext));
+    final posted =
+        await appState.postStatus(filePath: path, kind: isImage ? StatusKind.image : StatusKind.file);
+    if (!posted && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذّر نشر الحالة — تحقق من شاشة "فحص الأخطاء" للتفاصيل')),
+      );
+    }
   }
 
   @override
