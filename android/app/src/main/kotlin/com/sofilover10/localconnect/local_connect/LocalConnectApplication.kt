@@ -80,6 +80,15 @@ class LocalConnectApplication : Application() {
 
         MethodChannel(messenger, "local_connect/ringtone").setMethodCallHandler(ringtoneHandler)
         MethodChannel(messenger, "local_connect/notifications").setMethodCallHandler(messageNotificationHandler)
+
+        MethodChannel(messenger, "local_connect/foreground_service").setMethodCallHandler { call, result ->
+            if (call.method == "enableMediaProjectionType") {
+                LocalConnectForegroundService.enableMediaProjectionType(applicationContext)
+                result.success(null)
+            } else {
+                result.notImplemented()
+            }
+        }
     }
 
     companion object {

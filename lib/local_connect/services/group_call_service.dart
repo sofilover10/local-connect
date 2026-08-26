@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
@@ -577,6 +578,17 @@ class GroupCallService extends ChangeNotifier {
     }
 
     try {
+      // يجب أن تحمل الخدمة الأمامية الدائمة نوع mediaProjection *قبل* طلب
+      // الالتقاط، وإلا يرفضه أندرويد 14+ (راجع التعليق في
+      // LocalConnectForegroundService.onStartCommand) — الخدمة لا تحمل هذا
+      // النوع افتراضيًا عند إقلاع التطبيق العادي لتفادي رفض بدئها بالكامل.
+      try {
+        await const MethodChannel('local_connect/foreground_service')
+            .invokeMethod<void>('enableMediaProjectionType');
+      } catch (_) {
+        // منصّة غير أندرويد، أو إصدار أقدم لا يحتاج هذا أصلًا — لا يمنع
+        // المتابعة؛ getDisplayMedia أدناه هو الفحص الفعلي.
+      }
       final screenStream = await navigator.mediaDevices.getDisplayMedia({'video': true, 'audio': false});
       final screenTrack = screenStream.getVideoTracks().first;
       _screenStream = screenStream;
