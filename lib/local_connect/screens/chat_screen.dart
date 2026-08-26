@@ -148,6 +148,90 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
   }
 
+  Future<void> _showAttachMenu(BuildContext context) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.insert_drive_file),
+              title: const Text('ملف'),
+              onTap: () {
+                Navigator.pop(context);
+                _pickAndSendFile(context);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.bar_chart),
+              title: const Text('استطلاع'),
+              onTap: () {
+                Navigator.pop(context);
+                _showCreatePollDialog(context);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showCreatePollDialog(BuildContext context) async {
+    final questionController = TextEditingController();
+    final optionControllers = [TextEditingController(), TextEditingController()];
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('استطلاع جديد'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: questionController,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: 'السؤال'),
+                ),
+                const SizedBox(height: 12),
+                for (var i = 0; i < optionControllers.length; i++)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: TextField(
+                      controller: optionControllers[i],
+                      decoration: InputDecoration(labelText: 'خيار ${i + 1}'),
+                    ),
+                  ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton.icon(
+                    onPressed: () => setState(() => optionControllers.add(TextEditingController())),
+                    icon: const Icon(Icons.add),
+                    label: const Text('إضافة خيار'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('إنشاء')),
+          ],
+        ),
+      ),
+    );
+
+    if (result != true || !context.mounted) return;
+    await AppScope.of(context).sendPoll(
+      conversationId: widget.conversation.id,
+      question: questionController.text,
+      options: optionControllers.map((c) => c.text).toList(),
+    );
+    _scrollToBottom();
+  }
+
   Future<void> _toggleVoiceRecording(BuildContext context) async {
     if (_isRecording) {
       _recordingTicker?.cancel();
@@ -369,6 +453,14 @@ class _ChatScreenState extends State<ChatScreen> {
                             senderLabel: isGroup && !message.outgoing
                                 ? _displayNameFor(appState, message.senderInternalNumber)
                                 : null,
+                            myInternalNumber: appState.identity.internalNumber,
+                            onVote: message.kind == MessageKind.poll
+                                ? (optionIndex) => appState.voteInPoll(
+                                      conversationId: widget.conversation.id,
+                                      messageId: message.id,
+                                      optionIndex: optionIndex,
+                                    )
+                                : null,
                             onEdit: message.outgoing && message.kind == MessageKind.text
                                 ? () => _startEdit(message)
                                 : null,
@@ -446,9 +538,9 @@ class _ChatScreenState extends State<ChatScreen> {
                       children: [
                         IconButton(
                           onPressed:
-                              (_isRecording || _editingMessageId != null) ? null : () => _pickAndSendFile(context),
+                              (_isRecording || _editingMessageId != null) ? null : () => _showAttachMenu(context),
                           icon: const Icon(Icons.attach_file),
-                          tooltip: 'إرسال ملف',
+                          tooltip: 'إرفاق',
                         ),
                         Expanded(
                           child: TextField(

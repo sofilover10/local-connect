@@ -1,6 +1,6 @@
 enum MessageStatus { queued, sent, delivered, failed }
 
-enum MessageKind { text, file, voice }
+enum MessageKind { text, file, voice, poll }
 
 class ChatMessage {
   ChatMessage({
@@ -18,7 +18,12 @@ class ChatMessage {
     this.attachmentLocalPath,
     this.editedAt,
     this.isDeleted = false,
-  });
+    this.pollOptions,
+    Map<String, List<String>>? pollVotes,
+  }) : pollVotes = pollVotes ??
+            (pollOptions == null
+                ? null
+                : {for (var i = 0; i < pollOptions.length; i++) '$i': <String>[]});
 
   final String id;
   final String conversationId;
@@ -52,6 +57,16 @@ class ChatMessage {
   /// بالكامل بدل استخدام هذا العلم.
   bool isDeleted;
 
+  /// خيارات الاستطلاع — [text] يحمل نص السؤال لرسائل النوع poll. فارغة
+  /// لأي نوع رسالة آخر.
+  final List<String>? pollOptions;
+
+  /// تصويتات الاستطلاع: مفتاح الخريطة هو رقم الخيار كنص (فهرسه في
+  /// [pollOptions])، والقيمة قائمة الأرقام الداخلية لمن صوّتوا له. صوت
+  /// واحد فقط لكل شخص (يُنقَل تلقائيًا عند تغيير اختياره)؛ راجع
+  /// AppState.voteInPoll.
+  Map<String, List<String>>? pollVotes;
+
   Map<String, dynamic> toMap() => {
         'id': id,
         'conversationId': conversationId,
@@ -67,6 +82,8 @@ class ChatMessage {
         'attachmentLocalPath': attachmentLocalPath,
         'editedAt': editedAt?.toIso8601String(),
         'isDeleted': isDeleted,
+        'pollOptions': pollOptions,
+        'pollVotes': pollVotes,
       };
 
   factory ChatMessage.fromMap(Map<String, dynamic> map) => ChatMessage(
@@ -84,6 +101,9 @@ class ChatMessage {
         attachmentLocalPath: map['attachmentLocalPath'] as String?,
         editedAt: map['editedAt'] == null ? null : DateTime.parse(map['editedAt'] as String),
         isDeleted: map['isDeleted'] as bool? ?? false,
+        pollOptions: (map['pollOptions'] as List<dynamic>?)?.cast<String>(),
+        pollVotes: (map['pollVotes'] as Map<String, dynamic>?)
+            ?.map((key, value) => MapEntry(key, (value as List<dynamic>).cast<String>())),
       );
 
   /// الحمولة المُرسَلة فعليًا عبر مقبس TCP بين الجهازين. المرفقات تُرسَل
@@ -105,6 +125,8 @@ class ChatMessage {
     if (attachmentMimeType != null) payload['attachmentMimeType'] = attachmentMimeType;
     if (attachmentSizeBytes != null) payload['attachmentSizeBytes'] = attachmentSizeBytes;
     if (base64Data != null) payload['data'] = base64Data;
+    if (pollOptions != null) payload['pollOptions'] = pollOptions;
+    if (pollVotes != null) payload['pollVotes'] = pollVotes;
     return payload;
   }
 }

@@ -770,11 +770,102 @@ class LocalConnectAppState extends ChangeNotifier {
     await _attemptDelivery(message);
   }
 
+  /// ينشئ استطلاعًا برأي واحد لكل شخص (لا خيارات متعددة في هذه النسخة).
+  Future<void> sendPoll({
+    required String conversationId,
+    required String question,
+    required List<String> options,
+  }) async {
+    final trimmedQuestion = question.trim();
+    final trimmedOptions = options.map((o) => o.trim()).where((o) => o.isNotEmpty).toList();
+    if (trimmedQuestion.isEmpty || trimmedOptions.length < 2 || _isConversationBlocked(conversationId)) {
+      return;
+    }
+
+    final message = ChatMessage(
+      id: const Uuid().v4(),
+      conversationId: conversationId,
+      senderInternalNumber: identity.internalNumber,
+      text: trimmedQuestion,
+      sentAt: DateTime.now(),
+      outgoing: true,
+      kind: MessageKind.poll,
+      pollOptions: trimmedOptions,
+    );
+
+    _messagesByConversation.putIfAbsent(conversationId, () => []).add(message);
+    await _persistMessage(message);
+    _updateConversationPreview(conversationId, message, previewOverride: '📊 $trimmedQuestion');
+    _safeNotify();
+
+    await _attemptDelivery(message);
+  }
+
+  /// يصوّت (أو يغيّر صوته) في استطلاع — صوت واحد فقط لكل شخص، فيُزال أي
+  /// صوت سابق له من كل الخيارات الأخرى أولًا. يُحدَّث النسخة المحلية فورًا
+  /// (بمن فيهم صاحب الاستطلاع نفسه)، ثم يُرسَل التحديث الكامل لبقية
+  /// الأطراف حتى تُطابق نتائجهم لديهم — وليس فرق التصويت فقط، تفاديًا لأي
+  /// تعارض لو صوّت أكثر من شخص في نفس اللحظة تقريبًا.
+  Future<void> voteInPoll({
+    required String conversationId,
+    required String messageId,
+    required int optionIndex,
+  }) async {
+    final list = _messagesByConversation[conversationId];
+    final index = list?.indexWhere((m) => m.id == messageId) ?? -1;
+    if (list == null || index == -1) return;
+
+    final message = list[index];
+    if (message.kind != MessageKind.poll || message.pollOptions == null) return;
+    if (optionIndex < 0 || optionIndex >= message.pollOptions!.length) return;
+
+    final votes = message.pollVotes ?? {};
+    for (final voters in votes.values) {
+      voters.remove(identity.internalNumber);
+    }
+    votes.putIfAbsent('$optionIndex', () => []).add(identity.internalNumber);
+    message.pollVotes = votes;
+    await _persistMessage(message);
+    _safeNotify();
+
+    final conversation = conversations.firstWhere((c) => c.id == conversationId);
+    final votePayload = {
+      'type': 'poll_vote',
+      'id': message.id,
+      'senderInternalNumber': identity.internalNumber,
+      'pollVotes': votes,
+    };
+    unawaited(conversation.isGroup
+        ? _fanOutToGroup(conversation, votePayload)
+        : _deliverViaAnyTransport(conversation.peerInternalNumber, votePayload));
+  }
+
+  void _handleIncomingPollVote(String conversationId, Map<String, dynamic> payload) {
+    final id = payload['id'];
+    final pollVotesRaw = payload['pollVotes'];
+    if (id is! String || pollVotesRaw is! Map) return;
+
+    final list = _messagesByConversation[conversationId];
+    final messageIndex = list?.indexWhere((m) => m.id == id) ?? -1;
+    if (list == null || messageIndex == -1) return;
+
+    final message = list[messageIndex];
+    if (message.kind != MessageKind.poll) return;
+
+    message.pollVotes = pollVotesRaw.map(
+      (key, value) => MapEntry(key as String, (value as List<dynamic>).cast<String>()),
+    );
+    unawaited(_persistMessage(message));
+    _safeNotify();
+  }
+
   Future<void> _attemptDelivery(ChatMessage message) async {
     final conversation = conversations.firstWhere((c) => c.id == message.conversationId);
 
     String? base64Data;
-    if (message.kind != MessageKind.text) {
+    // فقط الصوت/الملف يحملان بايتات مرفق فعلية على القرص — النص والاستطلاع
+    // كلاهما "غير نص عادي" بمعنى kind، لكن لا مرفق لأي منهما إطلاقًا.
+    if (message.kind == MessageKind.voice || message.kind == MessageKind.file) {
       final path = message.attachmentLocalPath;
       if (path == null || !await File(path).exists()) {
         message.status = MessageStatus.failed;
@@ -1024,6 +1115,9 @@ class LocalConnectAppState extends ChangeNotifier {
         case 'delete_message':
           _handleIncomingDelete(conversationId, senderInternalNumber, payload);
           return;
+        case 'poll_vote':
+          _handleIncomingPollVote(conversationId, payload);
+          return;
         case 'call_offer':
         case 'call_answer':
         case 'call_ice_candidate':
@@ -1078,6 +1172,9 @@ class LocalConnectAppState extends ChangeNotifier {
       attachmentFileName: payload['attachmentFileName'] as String?,
       attachmentMimeType: payload['attachmentMimeType'] as String?,
       attachmentSizeBytes: payload['attachmentSizeBytes'] as int?,
+      pollOptions: (payload['pollOptions'] as List<dynamic>?)?.cast<String>(),
+      pollVotes: (payload['pollVotes'] as Map<String, dynamic>?)
+          ?.map((key, value) => MapEntry(key, (value as List<dynamic>).cast<String>())),
     );
 
     _handleValidIncomingMessage(conversationId, senderInternalNumber, message, base64Data);
@@ -1178,7 +1275,9 @@ class LocalConnectAppState extends ChangeNotifier {
           ? '🎤 رسالة صوتية'
           : message.kind == MessageKind.file
               ? '📎 ${message.attachmentFileName ?? message.text}'
-              : message.text;
+              : message.kind == MessageKind.poll
+                  ? '📊 ${message.text}'
+                  : message.text;
       _updateConversationPreview(conversationId, message, previewOverride: preview);
       if (conversationId != _activeConversationId) {
         final contactMatches = contacts.where((c) => c.internalNumber == senderInternalNumber);

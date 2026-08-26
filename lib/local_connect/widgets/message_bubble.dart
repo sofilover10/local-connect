@@ -13,6 +13,8 @@ class MessageBubble extends StatelessWidget {
     this.onDeleteForMe,
     this.onDeleteForEveryone,
     this.senderLabel,
+    this.myInternalNumber,
+    this.onVote,
   });
 
   final ChatMessage message;
@@ -24,6 +26,14 @@ class MessageBubble extends StatelessWidget {
   /// يكون المُرسِل أي عضو، بخلاف المحادثة الثنائية حيث الطرف واحد معروف
   /// أصلًا من عنوان الشاشة).
   final String? senderLabel;
+
+  /// رقمي الداخلي — لازم فقط لرسائل الاستطلاع، لتمييز خياري الحالي عن
+  /// خيارات بقية المصوِّتين.
+  final String? myInternalNumber;
+
+  /// يُستدعى عند الضغط على خيار في استطلاع (فهرس الخيار). null لرسالة غير
+  /// استطلاع.
+  final void Function(int optionIndex)? onVote;
 
   bool get _hasActions => onEdit != null || onDeleteForMe != null || onDeleteForEveryone != null;
 
@@ -156,6 +166,13 @@ class MessageBubble extends StatelessWidget {
           filePath: message.attachmentLocalPath,
           color: textColor,
         );
+      case MessageKind.poll:
+        return _PollContent(
+          message: message,
+          textColor: textColor,
+          myInternalNumber: myInternalNumber,
+          onVote: onVote,
+        );
     }
   }
 
@@ -172,5 +189,132 @@ class MessageBubble extends StatelessWidget {
       case MessageStatus.failed:
         return Icons.error_outline;
     }
+  }
+}
+
+class _PollContent extends StatelessWidget {
+  const _PollContent({
+    required this.message,
+    required this.textColor,
+    required this.myInternalNumber,
+    required this.onVote,
+  });
+
+  final ChatMessage message;
+  final Color textColor;
+  final String? myInternalNumber;
+  final void Function(int optionIndex)? onVote;
+
+  @override
+  Widget build(BuildContext context) {
+    final options = message.pollOptions ?? const [];
+    final votes = message.pollVotes ?? const {};
+    final totalVotes = votes.values.fold<int>(0, (sum, voters) => sum + voters.length);
+    var myVoteIndex = -1;
+    if (myInternalNumber != null) {
+      for (final entry in votes.entries) {
+        if (entry.value.contains(myInternalNumber)) {
+          myVoteIndex = int.tryParse(entry.key) ?? -1;
+          break;
+        }
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.bar_chart, size: 16, color: textColor.withValues(alpha: 0.8)),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                message.text,
+                style: TextStyle(color: textColor, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        for (var i = 0; i < options.length; i++) ...[
+          _PollOptionRow(
+            label: options[i],
+            voteCount: votes['$i']?.length ?? 0,
+            totalVotes: totalVotes,
+            selected: myVoteIndex == i,
+            textColor: textColor,
+            onTap: onVote == null ? null : () => onVote!(i),
+          ),
+          const SizedBox(height: 4),
+        ],
+        Text(
+          totalVotes == 0 ? 'لا يوجد تصويت بعد' : '$totalVotes صوت',
+          style: TextStyle(fontSize: 11, color: textColor.withValues(alpha: 0.7)),
+        ),
+      ],
+    );
+  }
+}
+
+class _PollOptionRow extends StatelessWidget {
+  const _PollOptionRow({
+    required this.label,
+    required this.voteCount,
+    required this.totalVotes,
+    required this.selected,
+    required this.textColor,
+    this.onTap,
+  });
+
+  final String label;
+  final int voteCount;
+  final int totalVotes;
+  final bool selected;
+  final Color textColor;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final ratio = totalVotes == 0 ? 0.0 : voteCount / totalVotes;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: FractionallySizedBox(
+              alignment: Alignment.centerLeft,
+              widthFactor: ratio,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: textColor.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ),
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: textColor.withValues(alpha: 0.3)),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Row(
+              children: [
+                Icon(
+                  selected ? Icons.check_circle : Icons.circle_outlined,
+                  size: 16,
+                  color: selected ? textColor : textColor.withValues(alpha: 0.5),
+                ),
+                const SizedBox(width: 8),
+                Expanded(child: Text(label, style: TextStyle(color: textColor))),
+                Text('$voteCount', style: TextStyle(fontSize: 12, color: textColor.withValues(alpha: 0.7))),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
