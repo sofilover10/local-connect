@@ -121,6 +121,16 @@ class LocalConnectAppState extends ChangeNotifier {
     return blockedInternalNumbers.contains(matches.first.peerInternalNumber);
   }
 
+  /// القنوات بث من طرف واحد فقط — المالك يملك حق النشر حصريًا؛ باقي
+  /// الأنواع (محادثة ثنائية، مجموعة عادية) لا قيد عليها هنا.
+  bool _canPostToConversation(String conversationId) {
+    final matches = conversations.where((c) => c.id == conversationId);
+    if (matches.isEmpty) return true;
+    final conversation = matches.first;
+    if (!conversation.isChannel) return true;
+    return conversation.groupOwnerInternalNumber == identity.internalNumber;
+  }
+
   Future<void> blockContact(String internalNumber) async {
     blockedInternalNumbers.add(internalNumber);
     await _store.blockedBox.put(internalNumber, DateTime.now().toIso8601String());
@@ -518,16 +528,18 @@ class LocalConnectAppState extends ChangeNotifier {
   Future<Conversation> createGroup({
     required String name,
     required List<String> memberInternalNumbers,
+    bool isChannel = false,
   }) async {
     final trimmedName = name.trim();
     final otherMembers = memberInternalNumbers.toSet().toList();
-    final groupId = 'GRP-${const Uuid().v4().substring(0, 8).toUpperCase()}';
+    final groupId = '${isChannel ? 'CH' : 'GRP'}-${const Uuid().v4().substring(0, 8).toUpperCase()}';
 
     final conversation = Conversation(
       id: groupId,
       peerInternalNumber: '',
       peerDisplayName: trimmedName,
       isGroup: true,
+      isChannel: isChannel,
       memberInternalNumbers: otherMembers,
       groupOwnerInternalNumber: identity.internalNumber,
     );
@@ -545,6 +557,7 @@ class LocalConnectAppState extends ChangeNotifier {
         'id': const Uuid().v4(),
         'groupId': groupId,
         'groupName': trimmedName,
+        'isChannel': isChannel,
         'members': allMembersIncludingSelf,
         'senderInternalNumber': identity.internalNumber,
       }));
@@ -593,6 +606,7 @@ class LocalConnectAppState extends ChangeNotifier {
       return;
     }
     final otherMembers = members.where((m) => m != identity.internalNumber).toList();
+    final isChannel = payload['isChannel'] == true;
 
     final existingIndex = conversations.indexWhere((c) => c.id == groupId);
     if (existingIndex == -1) {
@@ -601,6 +615,7 @@ class LocalConnectAppState extends ChangeNotifier {
         peerInternalNumber: '',
         peerDisplayName: groupName,
         isGroup: true,
+        isChannel: isChannel,
         memberInternalNumbers: otherMembers,
         groupOwnerInternalNumber: senderInternalNumber,
       );
@@ -735,7 +750,9 @@ class LocalConnectAppState extends ChangeNotifier {
 
   Future<void> sendMessage({required String conversationId, required String text}) async {
     final trimmed = text.trim();
-    if (trimmed.isEmpty || _isConversationBlocked(conversationId)) return;
+    if (trimmed.isEmpty || _isConversationBlocked(conversationId) || !_canPostToConversation(conversationId)) {
+      return;
+    }
 
     final message = ChatMessage(
       id: const Uuid().v4(),
@@ -763,7 +780,7 @@ class LocalConnectAppState extends ChangeNotifier {
     String? mimeType,
     String? caption,
   }) async {
-    if (_isConversationBlocked(conversationId)) return;
+    if (_isConversationBlocked(conversationId) || !_canPostToConversation(conversationId)) return;
     final file = File(filePath);
     if (!await file.exists()) {
       recordError('إرسال مرفق', 'الملف غير موجود: $filePath');
@@ -806,7 +823,10 @@ class LocalConnectAppState extends ChangeNotifier {
   }) async {
     final trimmedQuestion = question.trim();
     final trimmedOptions = options.map((o) => o.trim()).where((o) => o.isNotEmpty).toList();
-    if (trimmedQuestion.isEmpty || trimmedOptions.length < 2 || _isConversationBlocked(conversationId)) {
+    if (trimmedQuestion.isEmpty ||
+        trimmedOptions.length < 2 ||
+        _isConversationBlocked(conversationId) ||
+        !_canPostToConversation(conversationId)) {
       return;
     }
 
@@ -1406,6 +1426,15 @@ class LocalConnectAppState extends ChangeNotifier {
     // في هذه الحالة كان سيُنشئ محادثة ثنائية زائفة مع المُرسِل (عضو المجموعة)
     // خطأً، منفصلة تمامًا عن محادثة المجموعة الفعلية.
     final isKnownGroup = conversations.any((c) => c.id == conversationId && c.isGroup);
+
+    // قناة بث: لا يجوز قبول رسالة إلا من مالكها — وإلا لأمكن لأي متابع
+    // (أو جهاز يدّعي رقمًا داخليًا) حقن منشورات مزيَّفة تبدو رسمية للجميع.
+    final channelMatches = conversations.where((c) => c.id == conversationId && c.isChannel);
+    if (channelMatches.isNotEmpty && channelMatches.first.groupOwnerInternalNumber != senderInternalNumber) {
+      recordError('رسالة قناة واردة', 'رسالة من غير مالك القناة تم تجاهلها');
+      return;
+    }
+
     final ensureFuture = isKnownGroup
         ? Future<Conversation?>.value()
         : _ensureConversation(internalNumber: senderInternalNumber, displayName: senderInternalNumber);

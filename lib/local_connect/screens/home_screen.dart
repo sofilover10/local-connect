@@ -43,6 +43,14 @@ Future<void> _showAddMenu(BuildContext context) async {
               showCreateGroupDialog(context);
             },
           ),
+          ListTile(
+            leading: const Icon(Icons.campaign),
+            title: const Text('قناة جديدة'),
+            onTap: () {
+              Navigator.pop(context);
+              showCreateGroupDialog(context, isChannel: true);
+            },
+          ),
         ],
       ),
     ),
@@ -242,12 +250,16 @@ class _ConversationsTab extends StatelessWidget {
             conversation.peerDisplayName.isEmpty ? '?' : conversation.peerDisplayName[0];
         return ListTile(
           leading: CircleAvatar(
-            child: conversation.isGroup ? const Icon(Icons.groups) : Text(initial),
+            child: conversation.isChannel
+                ? const Icon(Icons.campaign)
+                : conversation.isGroup
+                    ? const Icon(Icons.groups)
+                    : Text(initial),
           ),
           title: Text(conversation.peerDisplayName),
           subtitle: Text(
             conversation.lastMessagePreview ??
-                (conversation.isGroup ? 'مجموعة' : conversation.peerInternalNumber),
+                (conversation.isChannel ? 'قناة' : conversation.isGroup ? 'مجموعة' : conversation.peerInternalNumber),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),

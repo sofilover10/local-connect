@@ -355,13 +355,21 @@ class _ChatScreenState extends State<ChatScreen> {
         final blocked = appState.isBlocked(widget.conversation.peerInternalNumber);
 
         final isGroup = widget.conversation.isGroup;
+        final isChannel = widget.conversation.isChannel;
+        final isOwner = widget.conversation.groupOwnerInternalNumber == appState.identity.internalNumber;
+        final canPost = !isChannel || isOwner;
 
         return Scaffold(
           appBar: AppBar(
             title: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (isGroup) const Icon(Icons.groups) else StatusDot(online: online),
+                if (isChannel)
+                  const Icon(Icons.campaign)
+                else if (isGroup)
+                  const Icon(Icons.groups)
+                else
+                  StatusDot(online: online),
                 const SizedBox(width: 8),
                 Flexible(
                   child: Column(
@@ -371,7 +379,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       Text(widget.conversation.peerDisplayName, overflow: TextOverflow.ellipsis),
                       Text(
                         isGroup
-                            ? '${widget.conversation.memberInternalNumbers.length + 1} أعضاء'
+                            ? '${widget.conversation.memberInternalNumbers.length + 1} ${isChannel ? 'متابعون' : 'أعضاء'}'
                             : (online ? 'متصل الآن على الشبكة' : 'غير ظاهر حاليًا — سيتم الإرسال عند ظهوره'),
                         style: const TextStyle(fontSize: 11, fontWeight: FontWeight.normal),
                       ),
@@ -381,7 +389,16 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
             actions: [
-              if (isGroup) ...[
+              if (isChannel)
+                IconButton(
+                  icon: const Icon(Icons.info_outline),
+                  tooltip: 'معلومات القناة',
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => GroupInfoScreen(conversation: widget.conversation)),
+                  ),
+                )
+              else if (isGroup) ...[
                 IconButton(
                   icon: const Icon(Icons.call),
                   tooltip: 'مكالمة صوتية جماعية',
@@ -527,6 +544,17 @@ class _ChatScreenState extends State<ChatScreen> {
                           child: const Text('إلغاء الحظر'),
                         ),
                       ],
+                    ),
+                  ),
+                )
+              else if (!canPost)
+                const SafeArea(
+                  child: Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text(
+                      'قناة بث — المالك فقط يستطيع النشر هنا.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey),
                     ),
                   ),
                 )

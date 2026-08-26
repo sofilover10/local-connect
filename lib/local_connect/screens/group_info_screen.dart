@@ -12,10 +12,11 @@ class GroupInfoScreen extends StatelessWidget {
   final Conversation conversation;
 
   Future<void> _leaveGroup(BuildContext context) async {
+    final label = conversation.isChannel ? 'القناة' : 'المجموعة';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('مغادرة المجموعة؟'),
+        title: Text('مغادرة $label؟'),
         content: Text('لن تصلك رسائل ${conversation.peerDisplayName} بعد المغادرة.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
@@ -33,19 +34,21 @@ class GroupInfoScreen extends StatelessWidget {
 
   Future<void> _addMember(BuildContext context) async {
     final appState = AppScope.of(context);
+    final label = conversation.isChannel ? 'متابع' : 'عضو';
+    final emptyMessage =
+        conversation.isChannel ? 'كل جهات اتصالك متابعون للقناة أصلًا' : 'كل جهات اتصالك أعضاء في المجموعة أصلًا';
     final candidates = appState.contacts
         .where((c) => !conversation.memberInternalNumbers.contains(c.internalNumber))
         .toList();
     if (candidates.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('كل جهات اتصالك أعضاء في المجموعة أصلًا')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(emptyMessage)));
       return;
     }
 
     final selected = await showDialog<String>(
       context: context,
       builder: (context) => SimpleDialog(
-        title: const Text('إضافة عضو'),
+        title: Text('إضافة $label'),
         children: candidates
             .map((c) => SimpleDialogOption(
                   onPressed: () => Navigator.pop(context, c.internalNumber),
@@ -59,11 +62,12 @@ class GroupInfoScreen extends StatelessWidget {
   }
 
   Future<void> _removeMember(BuildContext context, String memberInternalNumber, String memberName) async {
+    final label = conversation.isChannel ? 'متابع' : 'عضو';
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('إزالة عضو؟'),
-        content: Text('ستُزال $memberName من المجموعة.'),
+        title: Text('إزالة $label؟'),
+        content: Text('ستُزال $memberName من ${conversation.isChannel ? 'القناة' : 'المجموعة'}.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
           FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('إزالة')),
@@ -101,18 +105,26 @@ class GroupInfoScreen extends StatelessWidget {
           }),
         ];
 
+        final memberLabel = conversation.isChannel ? 'متابع' : 'عضو';
+
         return Scaffold(
-          appBar: AppBar(title: const Text('معلومات المجموعة')),
+          appBar: AppBar(title: Text(conversation.isChannel ? 'معلومات القناة' : 'معلومات المجموعة')),
           body: ListView(
             children: [
               Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
-                    const CircleAvatar(radius: 36, child: Icon(Icons.groups, size: 36)),
+                    CircleAvatar(
+                      radius: 36,
+                      child: Icon(conversation.isChannel ? Icons.campaign : Icons.groups, size: 36),
+                    ),
                     const SizedBox(height: 8),
                     Text(conversation.peerDisplayName, style: Theme.of(context).textTheme.titleLarge),
-                    Text('${members.length} أعضاء', style: const TextStyle(color: Colors.grey)),
+                    Text(
+                      conversation.isChannel ? '${members.length} متابعون' : '${members.length} أعضاء',
+                      style: const TextStyle(color: Colors.grey),
+                    ),
                   ],
                 ),
               ),
@@ -120,7 +132,7 @@ class GroupInfoScreen extends StatelessWidget {
               if (isOwner)
                 ListTile(
                   leading: const Icon(Icons.person_add),
-                  title: const Text('إضافة عضو'),
+                  title: Text('إضافة $memberLabel'),
                   onTap: () => _addMember(context),
                 ),
               ...members.map((entry) {
@@ -133,7 +145,7 @@ class GroupInfoScreen extends StatelessWidget {
                   trailing: (isOwner && !isSelf)
                       ? IconButton(
                           icon: const Icon(Icons.person_remove, color: Colors.red),
-                          tooltip: 'إزالة من المجموعة',
+                          tooltip: 'إزالة',
                           onPressed: () => _removeMember(context, internalNumber, name),
                         )
                       : null,
@@ -142,7 +154,10 @@ class GroupInfoScreen extends StatelessWidget {
               const Divider(),
               ListTile(
                 leading: const Icon(Icons.exit_to_app, color: Colors.red),
-                title: const Text('مغادرة المجموعة', style: TextStyle(color: Colors.red)),
+                title: Text(
+                  conversation.isChannel ? 'مغادرة القناة' : 'مغادرة المجموعة',
+                  style: const TextStyle(color: Colors.red),
+                ),
                 onTap: () => _leaveGroup(context),
               ),
             ],

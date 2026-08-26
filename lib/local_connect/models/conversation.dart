@@ -11,6 +11,7 @@ class Conversation {
     this.lastMessageAt,
     this.isArchived = false,
     this.isGroup = false,
+    this.isChannel = false,
     List<String>? memberInternalNumbers,
     this.groupOwnerInternalNumber,
   }) : memberInternalNumbers = memberInternalNumbers ?? [];
@@ -30,7 +31,13 @@ class Conversation {
 
   final bool isGroup;
 
-  /// الأعضاء الآخرون في المجموعة (**بدون** رقمي أنا) — يُستخدم مباشرة عند
+  /// true لقناة بث (نشر من طرف واحد فقط) — نوع خاص من المجموعة (isGroup
+  /// صحيح دائمًا لها أيضًا)؛ يُعيد استخدام كل بنية المجموعة (الدعوة،
+  /// العضوية، التوزيع) بلا أي تغيير في البروتوكول، فقط يُقيَّد الإرسال على
+  /// المالك عند التحقق في AppState.
+  final bool isChannel;
+
+  /// الأعضاء الآخرون في المجموعة (أو المتابعون في القناة) (**بدون** رقمي أنا) — يُستخدم مباشرة عند
   /// توزيع رسالة على الجميع. فارغة دائمًا لمحادثة ثنائية عادية.
   final List<String> memberInternalNumbers;
 
@@ -51,6 +58,7 @@ class Conversation {
         'lastMessageAt': lastMessageAt?.toIso8601String(),
         'isArchived': isArchived,
         'isGroup': isGroup,
+        'isChannel': isChannel,
         'memberInternalNumbers': memberInternalNumbers,
         'groupOwnerInternalNumber': groupOwnerInternalNumber,
       };
@@ -65,6 +73,7 @@ class Conversation {
             : DateTime.parse(map['lastMessageAt'] as String),
         isArchived: map['isArchived'] as bool? ?? false,
         isGroup: map['isGroup'] as bool? ?? false,
+        isChannel: map['isChannel'] as bool? ?? false,
         memberInternalNumbers:
             (map['memberInternalNumbers'] as List<dynamic>?)?.cast<String>() ?? const [],
         groupOwnerInternalNumber: map['groupOwnerInternalNumber'] as String?,

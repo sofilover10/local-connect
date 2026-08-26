@@ -3,16 +3,19 @@ import 'package:flutter/material.dart';
 import '../app_scope.dart';
 import 'chat_screen.dart';
 
-/// ينشئ مجموعة جديدة من جهات الاتصال المحفوظة أصلًا (لا يمكن دعوة رقم لم
-/// يُضَف كجهة اتصال بعد — لا خادم مركزي يبحث عن أرقام عشوائية على الشبكة).
-Future<void> showCreateGroupDialog(BuildContext context) async {
+/// ينشئ مجموعة أو قناة جديدة من جهات الاتصال المحفوظة أصلًا (لا يمكن دعوة
+/// رقم لم يُضَف كجهة اتصال بعد — لا خادم مركزي يبحث عن أرقام عشوائية على
+/// الشبكة). القناة تتطلب متابعًا واحدًا على الأقل ليصل لهم البث؛ يمكن
+/// إضافة المزيد لاحقًا من شاشة معلومات القناة على أي حال.
+Future<void> showCreateGroupDialog(BuildContext context, {bool isChannel = false}) async {
   final appState = AppScope.of(context);
   final nameController = TextEditingController();
   final selected = <String>{};
+  final minMembers = isChannel ? 1 : 2;
 
   if (appState.contacts.isEmpty) {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('أضف جهات اتصال أولًا قبل إنشاء مجموعة')),
+      SnackBar(content: Text('أضف جهات اتصال أولًا قبل إنشاء ${isChannel ? 'قناة' : 'مجموعة'}')),
     );
     return;
   }
@@ -21,7 +24,7 @@ Future<void> showCreateGroupDialog(BuildContext context) async {
     context: context,
     builder: (context) => StatefulBuilder(
       builder: (context, setState) => AlertDialog(
-        title: const Text('مجموعة جديدة'),
+        title: Text(isChannel ? 'قناة جديدة' : 'مجموعة جديدة'),
         content: SizedBox(
           width: double.maxFinite,
           child: Column(
@@ -30,10 +33,13 @@ Future<void> showCreateGroupDialog(BuildContext context) async {
               TextField(
                 controller: nameController,
                 autofocus: true,
-                decoration: const InputDecoration(labelText: 'اسم المجموعة'),
+                decoration: InputDecoration(labelText: isChannel ? 'اسم القناة' : 'اسم المجموعة'),
               ),
               const SizedBox(height: 8),
-              const Align(alignment: Alignment.centerRight, child: Text('اختر الأعضاء:')),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Text(isChannel ? 'اختر المتابعين الأوائل:' : 'اختر الأعضاء:'),
+              ),
               Flexible(
                 child: ListView(
                   shrinkWrap: true,
@@ -62,7 +68,7 @@ Future<void> showCreateGroupDialog(BuildContext context) async {
           ValueListenableBuilder<TextEditingValue>(
             valueListenable: nameController,
             builder: (context, value, _) => FilledButton(
-              onPressed: selected.length < 2 || value.text.trim().isEmpty
+              onPressed: selected.length < minMembers || value.text.trim().isEmpty
                   ? null
                   : () => Navigator.pop(context, true),
               child: const Text('إنشاء'),
@@ -78,6 +84,7 @@ Future<void> showCreateGroupDialog(BuildContext context) async {
   final conversation = await appState.createGroup(
     name: nameController.text.trim(),
     memberInternalNumbers: selected.toList(),
+    isChannel: isChannel,
   );
 
   if (!context.mounted) return;
