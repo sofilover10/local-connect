@@ -5,6 +5,7 @@ import 'package:intl/date_symbol_data_local.dart';
 
 import 'local_connect/app_scope.dart';
 import 'local_connect/screens/call_screen.dart';
+import 'local_connect/screens/group_call_screen.dart';
 import 'local_connect/screens/home_screen.dart';
 import 'local_connect/services/app_state.dart';
 
@@ -87,7 +88,9 @@ class _LocalConnectAppState extends State<LocalConnectApp> {
       child: MaterialApp(
         title: 'LocalConnect',
         locale: const Locale('ar'),
-        theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.teal)),
+        // أخضر واتساب المعروف (#25D366) — هوية بصرية مألوفة لمستخدمي تطبيقات
+        // المحادثة الشائعة بدل الأخضر المزرق (teal) الافتراضي السابق.
+        theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF25D366))),
         // builder يلفّ كل شجرة المسارات (Navigator) — هذا يجعل شاشة المكالمة
         // تظهر فوق أي شاشة حالية فور وصول عرض مكالمة، بدل الحاجة لدفعها
         // (push) من داخل كل شاشة على حدة أو تفويت اتصال وارد أثناء التصفّح.
@@ -95,6 +98,7 @@ class _LocalConnectAppState extends State<LocalConnectApp> {
           children: [
             ?child,
             CallOverlay(callService: widget.appState.callService),
+            GroupCallOverlay(groupCallService: widget.appState.groupCallService),
           ],
         ),
         home: FutureBuilder<void>(

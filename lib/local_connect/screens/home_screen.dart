@@ -278,16 +278,17 @@ class _UpdateBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final update = appState.availableUpdate!;
+    final accent = Theme.of(context).colorScheme.primary;
     return Container(
       width: double.infinity,
-      color: Colors.teal.shade50,
+      color: accent.withValues(alpha: 0.1),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
         children: [
-          const Icon(Icons.system_update, color: Colors.teal),
+          Icon(Icons.system_update, color: accent),
           const SizedBox(width: 8),
           Expanded(
-            child: Text('يتوفر إصدار جديد (${update.versionTag})', style: const TextStyle(color: Colors.teal)),
+            child: Text('يتوفر إصدار جديد (${update.versionTag})', style: TextStyle(color: accent)),
           ),
           TextButton(
             onPressed: () => launchUrl(Uri.parse(update.downloadUrl), mode: LaunchMode.externalApplication),

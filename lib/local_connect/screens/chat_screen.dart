@@ -216,6 +216,17 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Future<void> _startGroupCall(BuildContext context) async {
+    final appState = AppScope.of(context);
+    if (appState.groupCallService.currentCall != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يوجد مكالمة جماعية جارية بالفعل')),
+      );
+      return;
+    }
+    await appState.startGroupCall(widget.conversation);
+  }
+
   Future<void> _toggleBlock(BuildContext context, bool currentlyBlocked) async {
     final appState = AppScope.of(context);
     if (currentlyBlocked) {
@@ -286,7 +297,12 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
             actions: [
-              if (isGroup)
+              if (isGroup) ...[
+                IconButton(
+                  icon: const Icon(Icons.call),
+                  tooltip: 'مكالمة صوتية جماعية',
+                  onPressed: () => _startGroupCall(context),
+                ),
                 IconButton(
                   icon: const Icon(Icons.info_outline),
                   tooltip: 'معلومات المجموعة',
@@ -294,8 +310,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     context,
                     MaterialPageRoute(builder: (_) => GroupInfoScreen(conversation: widget.conversation)),
                   ),
-                )
-              else ...[
+                ),
+              ] else ...[
                 IconButton(
                   icon: const Icon(Icons.call),
                   tooltip: 'اتصال صوتي',

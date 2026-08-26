@@ -88,6 +88,9 @@ class BluetoothMessagingService {
       'call_ice_candidate',
       'call_end',
       'call_reject',
+      'group_call_invite',
+      'group_call_join',
+      'group_call_roster',
     };
     if (knownTypes.contains(map['type'])) {
       _incomingController.add(map);

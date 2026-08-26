@@ -211,7 +211,7 @@ class _PulsingAvatarState extends State<_PulsingAvatar> with SingleTickerProvide
           : const AlwaysStoppedAnimation(1.0),
       child: CircleAvatar(
         radius: 56,
-        backgroundColor: Colors.teal.shade400,
+        backgroundColor: Theme.of(context).colorScheme.primary,
         child: Text(initial, style: const TextStyle(fontSize: 40, color: Colors.white)),
       ),
     );

@@ -17,6 +17,7 @@ import 'bluetooth_messaging_service.dart';
 import 'bluetooth_transport_service.dart';
 import 'call_service.dart';
 import 'device_identity_service.dart';
+import 'group_call_service.dart';
 import 'lan_discovery_service.dart';
 import 'local_store_service.dart';
 import 'message_notification_service.dart';
@@ -80,6 +81,14 @@ class LocalConnectAppState extends ChangeNotifier {
   /// للرسائل النصية. تُبنى كـcallback بدل استيراد مباشر لتفادي اعتماد دائري
   /// بين الخدمتين، ولأن identity غير جاهز بعد وقت الإنشاء (late، يُضبط في init).
   late final CallService callService = CallService(
+    sendSignal: sendCallSignal,
+    localInternalNumber: () => identity.internalNumber,
+    localDisplayName: () => identity.displayName,
+  );
+
+  /// مكالمات صوتية جماعية (mesh) — نفس فكرة [callService] لكن لعدة أطراف؛
+  /// انظر توثيق GroupCallService لتفاصيل التنسيق بين الأعضاء.
+  late final GroupCallService groupCallService = GroupCallService(
     sendSignal: sendCallSignal,
     localInternalNumber: () => identity.internalNumber,
     localDisplayName: () => identity.displayName,
@@ -513,6 +522,22 @@ class LocalConnectAppState extends ChangeNotifier {
     }
 
     return conversation;
+  }
+
+  /// يبدأ مكالمة صوتية جماعية لأعضاء محادثة جماعية قائمة — راجع
+  /// [GroupCallService] لتفاصيل تنسيق الاتصال بين الأعضاء.
+  Future<void> startGroupCall(Conversation group) async {
+    if (!group.isGroup || group.memberInternalNumbers.isEmpty) return;
+    final memberDisplayNames = <String, String>{};
+    for (final internalNumber in group.memberInternalNumbers) {
+      final matches = contacts.where((c) => c.internalNumber == internalNumber);
+      memberDisplayNames[internalNumber] = matches.isEmpty ? internalNumber : matches.first.displayName;
+    }
+    await groupCallService.startGroupCall(
+      groupId: group.id,
+      groupName: group.peerDisplayName,
+      memberDisplayNames: memberDisplayNames,
+    );
   }
 
   /// يبني نفس المحادثة الجماعية محليًا لدى عضو مدعوّ حديثًا — أو يُحدِّث
@@ -1003,8 +1028,18 @@ class LocalConnectAppState extends ChangeNotifier {
         case 'call_reject':
         case 'call_end':
           // إشارات المكالمات لا تُخزَّن كرسائل محادثة — تُمرَّر مباشرة إلى
-          // CallService الذي يدير حالتها الخاصة.
-          unawaited(callService.handleSignal(payload));
+          // خدمة المكالمات المناسبة. وجود groupId يميّز إشارة اتصال WebRTC
+          // مباشر بين عضوين ضمن مكالمة جماعية عن مكالمة ثنائية عادية.
+          if (groupId is String) {
+            unawaited(groupCallService.handleSignal(payload));
+          } else {
+            unawaited(callService.handleSignal(payload));
+          }
+          return;
+        case 'group_call_invite':
+        case 'group_call_join':
+        case 'group_call_roster':
+          unawaited(groupCallService.handleSignal(payload));
           return;
         default:
           _handleIncomingNewMessage(conversationId, senderInternalNumber, payload);
@@ -1319,6 +1354,7 @@ class LocalConnectAppState extends ChangeNotifier {
     bluetoothMessaging.stop();
     unawaited(relay.dispose());
     callService.dispose();
+    groupCallService.dispose();
     super.dispose();
   }
 }
