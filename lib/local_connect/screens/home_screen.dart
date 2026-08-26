@@ -14,6 +14,7 @@ import 'archived_conversations_screen.dart';
 import 'blocked_contacts_screen.dart';
 import 'bluetooth_tab.dart';
 import 'chat_screen.dart';
+import 'communities_screen.dart';
 import 'create_group_dialog.dart';
 import 'diagnostics_screen.dart';
 import 'edit_name_dialog.dart';
@@ -162,6 +163,12 @@ class HomeScreen extends StatelessWidget {
               onPressed: () =>
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const BlockedContactsScreen())),
               icon: const Icon(Icons.block),
+            ),
+            IconButton(
+              tooltip: 'المجتمعات',
+              onPressed: () =>
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const CommunitiesScreen())),
+              icon: const Icon(Icons.diversity_3),
             ),
             AnimatedBuilder(
               animation: appState,
