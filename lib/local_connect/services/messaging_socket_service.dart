@@ -57,11 +57,22 @@ class MessagingSocketService {
     return startServer();
   }
 
+  /// حد أعلى للبايتات المتراكمة بلا سطر جديد قبل أن نعتبر الطرف الآخر
+  /// مسيئًا ونقطع اتصاله — بدون هذا الحد، أي جهاز على الشبكة يستطيع فتح
+  /// اتصال وإرسال بيانات بلا نهاية سطر إلى الأبد، فيتراكم [StringBuffer]
+  /// بلا حدود ويستنزف الذاكرة (رفض خدمة). أكبر حمولة شرعية متوقَّعة هي
+  /// مرفق مُرمَّز base64، فهذا الحد أكبر بكثير منها بأمان.
+  static const int _maxBufferedBytes = 64 * 1024 * 1024;
+
   void _handleClient(Socket client) {
     final buffer = StringBuffer();
     client.cast<List<int>>().transform(utf8.decoder).listen(
       (chunk) {
         buffer.write(chunk);
+        if (buffer.length > _maxBufferedBytes) {
+          client.destroy();
+          return;
+        }
         _drainLines(buffer, client);
       },
       onError: (_) => client.destroy(),
@@ -135,11 +146,35 @@ class MessagingSocketService {
       socket = await Socket.connect(address, port, timeout: timeout);
       final completer = Completer<bool>();
       final expectedId = payload['id'];
+      final buffer = StringBuffer();
 
+      // مطابقة الإقرار (ack) عبر تحليل JSON فعلي على كل سطر مكتمل، بدل فحص
+      // الحمولة الخام كنص (chunk.contains(...))، لأن الأخيرة قد تُطابَق
+      // خطأً لو ظهر نص '"ack"' أو نفس المعرّف داخل حمولة أخرى غير مرتبطة
+      // وصلت عبر نفس الاتصال، وأيضًا لا تتعامل مع تجزّؤ الرسالة عبر أكثر
+      // من حزمة TCP.
       final sub = socket.cast<List<int>>().transform(utf8.decoder).listen((chunk) {
-        if (chunk.contains('"ack"') && chunk.contains('$expectedId')) {
-          if (!completer.isCompleted) completer.complete(true);
+        buffer.write(chunk);
+        var content = buffer.toString();
+        var newlineIndex = content.indexOf('\n');
+        while (newlineIndex != -1) {
+          final line = content.substring(0, newlineIndex).trim();
+          content = content.substring(newlineIndex + 1);
+          if (line.isNotEmpty) {
+            try {
+              final map = jsonDecode(line) as Map<String, dynamic>;
+              if (map['type'] == 'ack' && map['id'] == expectedId) {
+                if (!completer.isCompleted) completer.complete(true);
+              }
+            } catch (_) {
+              // سطر غير صالح كـJSON — يُتجاهَل، لا يمنع فحص الأسطر التالية.
+            }
+          }
+          newlineIndex = content.indexOf('\n');
         }
+        buffer
+          ..clear()
+          ..write(content);
       });
 
       socket.write('${jsonEncode(payload)}\n');
@@ -151,6 +186,10 @@ class MessagingSocketService {
       await sub.cancel();
       return result;
     } catch (_) {
+      // فشل الاتصال بهذا العنوان (رفض، تعذّر وصول، مهلة...) متوقَّع وشائع —
+      // الطرف المستدعي يجرّب وسيلة النقل التالية في السلسلة الاحتياطية
+      // (انظر _deliverViaAnyTransport في app_state_messaging.dart)، فلا داعٍ
+      // لتسجيله كخطأ يُعرَض في شاشة الفحص.
       return false;
     } finally {
       socket?.destroy();
