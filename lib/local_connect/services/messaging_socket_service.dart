@@ -99,6 +99,8 @@ class MessagingSocketService {
       'edit_message',
       'delete_message',
       'poll_vote',
+      'status_post',
+      'status_view',
       'group_invite',
       'group_member_update',
       'call_offer',

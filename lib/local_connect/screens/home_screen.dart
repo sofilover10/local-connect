@@ -17,6 +17,7 @@ import 'chat_screen.dart';
 import 'create_group_dialog.dart';
 import 'diagnostics_screen.dart';
 import 'edit_name_dialog.dart';
+import 'status_tab.dart';
 import 'wifi_direct_tab.dart';
 
 Future<void> _showAddMenu(BuildContext context) async {
@@ -116,7 +117,7 @@ class HomeScreen extends StatelessWidget {
     unawaited(appState.ensureNotificationPermission());
 
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: Scaffold(
         appBar: AppBar(
           title: AnimatedBuilder(
@@ -176,6 +177,7 @@ class HomeScreen extends StatelessWidget {
             isScrollable: true,
             tabs: [
               Tab(text: 'المحادثات'),
+              Tab(text: 'الحالات'),
               Tab(text: 'أجهزة قريبة (Wi-Fi)'),
               Tab(text: 'بلوتوث'),
               Tab(text: 'Wi-Fi Direct'),
@@ -191,6 +193,7 @@ class HomeScreen extends StatelessWidget {
                 child: TabBarView(
                   children: [
                     _ConversationsTab(appState: appState),
+                    StatusTab(appState: appState),
                     _NearbyDevicesTab(appState: appState),
                     BluetoothTab(appState: appState),
                     WifiDirectTab(appState: appState),
