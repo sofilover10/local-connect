@@ -29,7 +29,11 @@ class BluetoothMessagingService {
   StreamSubscription<Map<String, dynamic>>? _sub;
 
   void start() {
-    _sub = _transport.dataStream.listen(_handleEvent);
+    // بدون onError، أي خطأ من القناة الأصلية (EventChannel من كود
+    // Kotlin) يهرب كخطأ Zone غير مُلتقَط بدل أن يُهمَل بأمان هنا — البلوتوث
+    // اختياري تمامًا (وسيلة نقل احتياطية)، فشل عابر في تياره لا يستحق أكثر
+    // من التجاهل، بنفس معاملة أخطاء JSON المشوَّهة في _handleLine.
+    _sub = _transport.dataStream.listen(_handleEvent, onError: (_) {});
   }
 
   bool isConnected(String address) => _connectedAddresses.contains(address);

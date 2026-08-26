@@ -154,29 +154,37 @@ class MessagingSocketService {
       // خطأً لو ظهر نص '"ack"' أو نفس المعرّف داخل حمولة أخرى غير مرتبطة
       // وصلت عبر نفس الاتصال، وأيضًا لا تتعامل مع تجزّؤ الرسالة عبر أكثر
       // من حزمة TCP.
-      final sub = socket.cast<List<int>>().transform(utf8.decoder).listen((chunk) {
-        buffer.write(chunk);
-        var content = buffer.toString();
-        var newlineIndex = content.indexOf('\n');
-        while (newlineIndex != -1) {
-          final line = content.substring(0, newlineIndex).trim();
-          content = content.substring(newlineIndex + 1);
-          if (line.isNotEmpty) {
-            try {
-              final map = jsonDecode(line) as Map<String, dynamic>;
-              if (map['type'] == 'ack' && map['id'] == expectedId) {
-                if (!completer.isCompleted) completer.complete(true);
+      final sub = socket.cast<List<int>>().transform(utf8.decoder).listen(
+        (chunk) {
+          buffer.write(chunk);
+          var content = buffer.toString();
+          var newlineIndex = content.indexOf('\n');
+          while (newlineIndex != -1) {
+            final line = content.substring(0, newlineIndex).trim();
+            content = content.substring(newlineIndex + 1);
+            if (line.isNotEmpty) {
+              try {
+                final map = jsonDecode(line) as Map<String, dynamic>;
+                if (map['type'] == 'ack' && map['id'] == expectedId) {
+                  if (!completer.isCompleted) completer.complete(true);
+                }
+              } catch (_) {
+                // سطر غير صالح كـJSON — يُتجاهَل، لا يمنع فحص الأسطر التالية.
               }
-            } catch (_) {
-              // سطر غير صالح كـJSON — يُتجاهَل، لا يمنع فحص الأسطر التالية.
             }
+            newlineIndex = content.indexOf('\n');
           }
-          newlineIndex = content.indexOf('\n');
-        }
-        buffer
-          ..clear()
-          ..write(content);
-      });
+          buffer
+            ..clear()
+            ..write(content);
+        },
+        // بدون هذا، انقطاع الاتصال بعد الكتابة وقبل وصول الإقرار (شائع —
+        // الطرف الآخر أُغلِق أو الشبكة تذبذبت) يهرب كخطأ Zone غير مُلتقَط
+        // بدل أن يُعامَل كفشل تسليم عادي (يُعيد المستدعي المحاولة لاحقًا).
+        onError: (_) {
+          if (!completer.isCompleted) completer.complete(false);
+        },
+      );
 
       socket.write('${jsonEncode(payload)}\n');
 
