@@ -5,6 +5,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
 
+import '../models/call_session.dart' show CallMediaType;
 import '../models/group_call_session.dart';
 import 'call_sound_service.dart';
 
@@ -25,7 +26,9 @@ typedef GroupCallSignalSender = Future<bool> Function(
 /// يُرسِل العرض دائمًا) — قرار متّسق من أي طرف يُحسَب، بلا حاجة لتنسيق حول
 /// هذه النقطة تحديدًا.
 ///
-/// فيديو ومشاركة الشاشة الجماعية خارج نطاق هذه النسخة — صوت فقط.
+/// يدعم الصوت والفيديو معًا (نفس شبكة الاتصالات المباشرة تحمل كليهما دون
+/// تغيير في التنسيق)، ومشاركة شاشة تستبدل مسار الفيديو المُرسَل لكل
+/// المشاركين دفعة واحدة (انظر [toggleScreenShare]).
 class GroupCallService extends ChangeNotifier {
   GroupCallService({
     required GroupCallSignalSender sendSignal,
@@ -49,15 +52,31 @@ class GroupCallService extends ChangeNotifier {
 
   GroupCallSession? currentCall;
   bool isMuted = false;
+  bool isCameraOff = false;
+  bool isScreenSharing = false;
   bool _disposed = false;
 
   MediaStream? _localStream;
+
+  /// مسار الكاميرا الأصلي، يُحفَظ جانبًا أثناء مشاركة الشاشة حتى يمكن
+  /// العودة إليه عند إيقافها بدل إعادة طلب الكاميرا من جديد.
+  MediaStreamTrack? _cameraTrack;
+  MediaStream? _screenStream;
+
+  final RTCVideoRenderer localRenderer = RTCVideoRenderer();
+  bool _localRendererInitialized = false;
+  final Map<String, RTCVideoRenderer> _remoteRenderers = {};
+
   final Map<String, RTCPeerConnection> _peerConnections = {};
   final Set<String> _connectingTo = {};
   final Map<String, List<RTCIceCandidate>> _pendingCandidates = {};
   final Map<String, bool> _remoteDescriptionSet = {};
   Timer? _ringTimer;
   Timer? _clearTimer;
+
+  /// مُصيِّر فيديو مشارك مُحدَّد، أو null إن لم يتصل بعد (لا فيديو لعرضه)
+  /// أو كانت المكالمة صوتية بحتة أصلًا.
+  RTCVideoRenderer? remoteRendererFor(String internalNumber) => _remoteRenderers[internalNumber];
 
   void _safeNotify() {
     if (!_disposed) notifyListeners();
@@ -74,12 +93,19 @@ class GroupCallService extends ChangeNotifier {
     required String groupId,
     required String groupName,
     required Map<String, String> memberDisplayNames,
+    required CallMediaType mediaType,
   }) async {
     if (currentCall != null || memberDisplayNames.isEmpty) return;
 
+    await _ensureRenderers();
     final callId = const Uuid().v4();
-    final session =
-        GroupCallSession(callId: callId, groupId: groupId, groupName: groupName, isInitiator: true);
+    final session = GroupCallSession(
+      callId: callId,
+      groupId: groupId,
+      groupName: groupName,
+      isInitiator: true,
+      mediaType: mediaType,
+    );
     for (final entry in memberDisplayNames.entries) {
       session.participants[entry.key] =
           GroupCallParticipant(internalNumber: entry.key, displayName: entry.value);
@@ -88,7 +114,7 @@ class GroupCallService extends ChangeNotifier {
     _safeNotify();
 
     try {
-      await _ensureLocalAudio();
+      await _ensureLocalMedia(mediaType);
     } catch (error) {
       await _endCall(reason: 'تعذّر بدء المكالمة: $error');
       return;
@@ -104,6 +130,7 @@ class GroupCallService extends ChangeNotifier {
         'groupId': groupId,
         'callId': callId,
         'groupName': groupName,
+        'mediaType': mediaType.name,
         'callerDisplayName': _localDisplayName(),
         'senderInternalNumber': _localInternalNumber(),
       }));
@@ -126,7 +153,8 @@ class GroupCallService extends ChangeNotifier {
     _safeNotify();
 
     try {
-      await _ensureLocalAudio();
+      await _ensureRenderers();
+      await _ensureLocalMedia(call.mediaType);
     } catch (error) {
       await _endCall(reason: 'تعذّر الانضمام: $error');
       return;
@@ -204,14 +232,21 @@ class GroupCallService extends ChangeNotifier {
       return;
     }
 
+    final mediaType = payload['mediaType'] == 'video' ? CallMediaType.video : CallMediaType.audio;
     final callerDisplayName = payload['callerDisplayName'] as String? ?? senderInternalNumber;
-    final session =
-        GroupCallSession(callId: callId, groupId: groupId, groupName: groupName, isInitiator: false);
+    final session = GroupCallSession(
+      callId: callId,
+      groupId: groupId,
+      groupName: groupName,
+      isInitiator: false,
+      mediaType: mediaType,
+    );
     session.participants[senderInternalNumber] =
         GroupCallParticipant(internalNumber: senderInternalNumber, displayName: callerDisplayName)
           ..hasJoined = true;
     currentCall = session;
     _startRingTimeout();
+    unawaited(_ensureRenderers());
     unawaited(_sound.playRingtone());
     unawaited(_sound.showIncomingCallNotification('مكالمة جماعية: $groupName'));
     _safeNotify();
@@ -296,7 +331,10 @@ class GroupCallService extends ChangeNotifier {
     _remoteDescriptionSet[senderInternalNumber] = true;
     await _drainPendingCandidates(senderInternalNumber);
 
-    final answer = await pc.createAnswer({'offerToReceiveAudio': true, 'offerToReceiveVideo': false});
+    final answer = await pc.createAnswer({
+      'offerToReceiveAudio': true,
+      'offerToReceiveVideo': call.mediaType == CallMediaType.video,
+    });
     await pc.setLocalDescription(answer);
     unawaited(_sendSignal(senderInternalNumber, {
       'type': 'call_answer',
@@ -384,7 +422,7 @@ class GroupCallService extends ChangeNotifier {
     _connectingTo.add(otherNumber);
     try {
       if (_localStream == null) {
-        await _ensureLocalAudio();
+        await _ensureLocalMedia(call.mediaType);
       }
 
       final pc = await createPeerConnection(_rtcConfiguration);
@@ -395,6 +433,16 @@ class GroupCallService extends ChangeNotifier {
       for (final track in _localStream!.getTracks()) {
         await pc.addTrack(track, _localStream!);
       }
+
+      pc.onTrack = (event) {
+        if (event.track.kind != 'video' || event.streams.isEmpty) return;
+        final renderer = _remoteRenderers.putIfAbsent(otherNumber, () => RTCVideoRenderer());
+        unawaited(() async {
+          if (renderer.textureId == null) await renderer.initialize();
+          renderer.srcObject = event.streams.first;
+          _safeNotify();
+        }());
+      };
 
       pc.onIceCandidate = (candidate) {
         if (candidate.candidate == null) return;
@@ -427,7 +475,10 @@ class GroupCallService extends ChangeNotifier {
 
       final shouldOffer = _localInternalNumber().compareTo(otherNumber) < 0;
       if (shouldOffer) {
-        final offer = await pc.createOffer({'offerToReceiveAudio': true, 'offerToReceiveVideo': false});
+        final offer = await pc.createOffer({
+          'offerToReceiveAudio': true,
+          'offerToReceiveVideo': call.mediaType == CallMediaType.video,
+        });
         await pc.setLocalDescription(offer);
         unawaited(_sendSignal(otherNumber, {
           'type': 'call_offer',
@@ -478,11 +529,97 @@ class GroupCallService extends ChangeNotifier {
     _safeNotify();
   }
 
-  Future<void> _ensureLocalAudio() async {
+  void toggleCamera() {
+    final stream = _localStream;
+    if (stream == null || currentCall?.mediaType != CallMediaType.video || isScreenSharing) return;
+    isCameraOff = !isCameraOff;
+    for (final track in stream.getVideoTracks()) {
+      track.enabled = !isCameraOff;
+    }
+    _safeNotify();
+  }
+
+  Future<void> switchCamera() async {
+    final stream = _localStream;
+    if (stream == null || currentCall?.mediaType != CallMediaType.video || isScreenSharing) return;
+    final tracks = stream.getVideoTracks();
+    if (tracks.isEmpty) return;
+    await Helper.switchCamera(tracks.first);
+  }
+
+  /// يستبدل مسار الفيديو المُرسَل لكل المشاركين المتصلين حاليًا بمسار
+  /// التقاط الشاشة (أو العكس عند الإيقاف) — بلا حاجة لأي تفاوض SDP جديد؛
+  /// replaceTrack يُحدِّث الاتصالات القائمة مباشرة.
+  Future<void> toggleScreenShare() async {
+    final call = currentCall;
+    if (call == null || call.mediaType != CallMediaType.video) return;
+
+    if (isScreenSharing) {
+      final cameraTrack = _cameraTrack;
+      if (cameraTrack == null) return;
+      for (final pc in _peerConnections.values) {
+        final senders = await pc.getSenders();
+        for (final sender in senders.where((s) => s.track?.kind == 'video')) {
+          await sender.replaceTrack(cameraTrack);
+        }
+      }
+      localRenderer.srcObject = _localStream;
+      final screenStream = _screenStream;
+      _screenStream = null;
+      if (screenStream != null) {
+        for (final track in screenStream.getTracks()) {
+          await track.stop();
+        }
+      }
+      isScreenSharing = false;
+      _safeNotify();
+      return;
+    }
+
+    try {
+      final screenStream = await navigator.mediaDevices.getDisplayMedia({'video': true, 'audio': false});
+      final screenTrack = screenStream.getVideoTracks().first;
+      _screenStream = screenStream;
+      for (final pc in _peerConnections.values) {
+        final senders = await pc.getSenders();
+        for (final sender in senders.where((s) => s.track?.kind == 'video')) {
+          await sender.replaceTrack(screenTrack);
+        }
+      }
+      localRenderer.srcObject = screenStream;
+      isScreenSharing = true;
+      _safeNotify();
+    } catch (_) {
+      // رفض صلاحية المشاركة أو إلغاء المستخدم لنافذة اختيار الشاشة — لا
+      // يجب أن يُسقِط المكالمة نفسها، تبقى isScreenSharing false ببساطة.
+    }
+  }
+
+  Future<void> _ensureRenderers() async {
+    if (_localRendererInitialized) return;
+    await localRenderer.initialize();
+    _localRendererInitialized = true;
+  }
+
+  Future<void> _ensureLocalMedia(CallMediaType mediaType) async {
+    await _ensureRenderers();
     if (_localStream != null) return;
-    final status = await Permission.microphone.request();
-    if (!status.isGranted) throw 'صلاحية الميكروفون مرفوضة';
-    _localStream = await navigator.mediaDevices.getUserMedia({'audio': true, 'video': false});
+    final permissions = <Permission>[
+      Permission.microphone,
+      if (mediaType == CallMediaType.video) Permission.camera,
+    ];
+    final statuses = await permissions.request();
+    if (statuses.values.any((status) => !status.isGranted)) {
+      throw 'صلاحية الميكروفون${mediaType == CallMediaType.video ? '/الكاميرا' : ''} مرفوضة';
+    }
+    _localStream = await navigator.mediaDevices.getUserMedia({
+      'audio': true,
+      'video': mediaType == CallMediaType.video ? {'facingMode': 'user'} : false,
+    });
+    if (mediaType == CallMediaType.video && _localStream!.getVideoTracks().isNotEmpty) {
+      _cameraTrack = _localStream!.getVideoTracks().first;
+    }
+    localRenderer.srcObject = _localStream;
   }
 
   void _startRingTimeout() {
@@ -548,12 +685,38 @@ class GroupCallService extends ChangeNotifier {
         // لا شيء.
       }
     }
+    final renderer = _remoteRenderers.remove(otherNumber);
+    if (renderer != null) {
+      try {
+        await renderer.dispose();
+      } catch (_) {
+        // لا شيء.
+      }
+    }
   }
 
   Future<void> _teardownAllConnections() async {
     for (final number in _peerConnections.keys.toList()) {
       await _teardownPeerConnection(number);
     }
+
+    isMuted = false;
+    isCameraOff = false;
+    isScreenSharing = false;
+    _cameraTrack = null;
+
+    if (_localRendererInitialized) {
+      localRenderer.srcObject = null;
+    }
+
+    final screenStream = _screenStream;
+    _screenStream = null;
+    if (screenStream != null) {
+      for (final track in screenStream.getTracks()) {
+        await track.stop();
+      }
+    }
+
     final stream = _localStream;
     _localStream = null;
     if (stream != null) {
@@ -569,6 +732,7 @@ class GroupCallService extends ChangeNotifier {
     _ringTimer?.cancel();
     _clearTimer?.cancel();
     unawaited(_teardownAllConnections());
+    unawaited(localRenderer.dispose());
     super.dispose();
   }
 }

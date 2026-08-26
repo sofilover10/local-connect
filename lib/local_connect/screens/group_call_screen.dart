@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import '../models/call_session.dart' show CallMediaType;
 import '../models/group_call_session.dart';
 import '../services/group_call_service.dart';
 
@@ -74,41 +76,70 @@ class _GroupCallScreenState extends State<GroupCallScreen> {
     final call = widget.call;
     final service = widget.groupCallService;
     final isIncomingRinging = call.state == GroupCallState.ringing && !call.isInitiator;
+    final isVideo = call.mediaType == CallMediaType.video;
 
     return PopScope(
       canPop: false,
       child: Material(
         color: Colors.black,
         child: SafeArea(
-          child: Column(
+          child: Stack(
             children: [
-              const SizedBox(height: 24),
-              const Icon(Icons.groups, color: Colors.white, size: 40),
-              const SizedBox(height: 8),
-              Text(
-                call.groupName,
-                style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+              Column(
+                children: [
+                  const SizedBox(height: 24),
+                  const Icon(Icons.groups, color: Colors.white, size: 40),
+                  const SizedBox(height: 8),
+                  Text(
+                    call.groupName,
+                    style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(_statusText(call), style: const TextStyle(color: Colors.white70, fontSize: 15)),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: call.participants.isEmpty
+                        ? const Center(
+                            child: Text('بانتظار انضمام أحد...', style: TextStyle(color: Colors.white54)),
+                          )
+                        : isVideo
+                            ? GridView.count(
+                                crossAxisCount: call.participants.length > 1 ? 2 : 1,
+                                padding: const EdgeInsets.all(8),
+                                mainAxisSpacing: 8,
+                                crossAxisSpacing: 8,
+                                children: call.participants.values
+                                    .map((participant) => _VideoParticipantTile(
+                                          participant: participant,
+                                          renderer: service.remoteRendererFor(participant.internalNumber),
+                                        ))
+                                    .toList(),
+                              )
+                            : ListView(
+                                children: call.participants.values
+                                    .map((participant) => _AudioParticipantTile(participant: participant))
+                                    .toList(),
+                              ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 32, top: 8),
+                    child: isIncomingRinging
+                        ? _IncomingGroupCallControls(service: service)
+                        : _ActiveGroupCallControls(service: service, call: call),
+                  ),
+                ],
               ),
-              const SizedBox(height: 6),
-              Text(_statusText(call), style: const TextStyle(color: Colors.white70, fontSize: 15)),
-              const SizedBox(height: 16),
-              Expanded(
-                child: call.participants.isEmpty
-                    ? const Center(
-                        child: Text('بانتظار انضمام أحد...', style: TextStyle(color: Colors.white54)),
-                      )
-                    : ListView(
-                        children: call.participants.values
-                            .map((participant) => _ParticipantTile(participant: participant))
-                            .toList(),
-                      ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 32, top: 8),
-                child: isIncomingRinging
-                    ? _IncomingGroupCallControls(service: service)
-                    : _ActiveGroupCallControls(service: service, call: call),
-              ),
+              if (isVideo && !isIncomingRinging && !service.isCameraOff)
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  width: 90,
+                  height: 120,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: RTCVideoView(service.localRenderer, mirror: !service.isScreenSharing),
+                  ),
+                ),
             ],
           ),
         ),
@@ -117,8 +148,8 @@ class _GroupCallScreenState extends State<GroupCallScreen> {
   }
 }
 
-class _ParticipantTile extends StatelessWidget {
-  const _ParticipantTile({required this.participant});
+class _AudioParticipantTile extends StatelessWidget {
+  const _AudioParticipantTile({required this.participant});
 
   final GroupCallParticipant participant;
 
@@ -150,6 +181,54 @@ class _ParticipantTile extends StatelessWidget {
   }
 }
 
+class _VideoParticipantTile extends StatelessWidget {
+  const _VideoParticipantTile({required this.participant, required this.renderer});
+
+  final GroupCallParticipant participant;
+  final RTCVideoRenderer? renderer;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasVideo = renderer != null && renderer!.srcObject != null;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        color: Colors.grey.shade900,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (hasVideo)
+              RTCVideoView(renderer!, objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover)
+            else
+              Center(
+                child: CircleAvatar(
+                  radius: 28,
+                  backgroundColor: Colors.teal.shade400,
+                  child: Text(
+                    participant.displayName.isEmpty ? '?' : participant.displayName[0],
+                    style: const TextStyle(color: Colors.white, fontSize: 22),
+                  ),
+                ),
+              ),
+            Positioned(
+              bottom: 6,
+              right: 6,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6)),
+                child: Text(
+                  participant.displayName,
+                  style: const TextStyle(color: Colors.white, fontSize: 12),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _IncomingGroupCallControls extends StatelessWidget {
   const _IncomingGroupCallControls({required this.service});
 
@@ -176,13 +255,39 @@ class _ActiveGroupCallControls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ended = call.state == GroupCallState.ended;
+    final isVideo = call.mediaType == CallMediaType.video;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _ToggleRoundButton(
-          icon: service.isMuted ? Icons.mic_off : Icons.mic,
-          active: service.isMuted,
-          onPressed: ended ? null : service.toggleMute,
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _ToggleRoundButton(
+              icon: service.isMuted ? Icons.mic_off : Icons.mic,
+              active: service.isMuted,
+              onPressed: ended ? null : service.toggleMute,
+            ),
+            if (isVideo) ...[
+              const SizedBox(width: 16),
+              _ToggleRoundButton(
+                icon: service.isCameraOff ? Icons.videocam_off : Icons.videocam,
+                active: service.isCameraOff,
+                onPressed: ended ? null : service.toggleCamera,
+              ),
+              const SizedBox(width: 16),
+              _ToggleRoundButton(
+                icon: Icons.screen_share,
+                active: service.isScreenSharing,
+                onPressed: ended ? null : () => unawaited(service.toggleScreenShare()),
+              ),
+              const SizedBox(width: 16),
+              _ToggleRoundButton(
+                icon: Icons.cameraswitch,
+                active: false,
+                onPressed: (ended || service.isScreenSharing) ? null : () => unawaited(service.switchCamera()),
+              ),
+            ],
+          ],
         ),
         const SizedBox(height: 20),
         _RoundButton(

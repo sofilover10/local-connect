@@ -27,7 +27,14 @@ class LocalConnectForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            // mediaProjection مُدرَج هنا أيضًا (وليس فقط في المانيفست) لأن
+            // أندرويد 14+ يتحقق من النوع الفعلي الذي بدأت به الخدمة وقت
+            // استدعاء التقاط الشاشة، لا يكتفي بما هو مُعلَن في المانيفست فقط.
+            startForeground(
+                NOTIFICATION_ID,
+                buildNotification(),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+            )
         } else {
             startForeground(NOTIFICATION_ID, buildNotification())
         }

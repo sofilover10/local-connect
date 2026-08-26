@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
 
+import '../models/call_session.dart' show CallMediaType;
 import '../models/contact.dart';
 import '../models/conversation.dart';
 import '../models/diagnostic_check.dart';
@@ -524,9 +525,9 @@ class LocalConnectAppState extends ChangeNotifier {
     return conversation;
   }
 
-  /// يبدأ مكالمة صوتية جماعية لأعضاء محادثة جماعية قائمة — راجع
-  /// [GroupCallService] لتفاصيل تنسيق الاتصال بين الأعضاء.
-  Future<void> startGroupCall(Conversation group) async {
+  /// يبدأ مكالمة جماعية (صوتية أو مرئية) لأعضاء محادثة جماعية قائمة —
+  /// راجع [GroupCallService] لتفاصيل تنسيق الاتصال بين الأعضاء.
+  Future<void> startGroupCall(Conversation group, {required CallMediaType mediaType}) async {
     if (!group.isGroup || group.memberInternalNumbers.isEmpty) return;
     final memberDisplayNames = <String, String>{};
     for (final internalNumber in group.memberInternalNumbers) {
@@ -537,6 +538,7 @@ class LocalConnectAppState extends ChangeNotifier {
       groupId: group.id,
       groupName: group.peerDisplayName,
       memberDisplayNames: memberDisplayNames,
+      mediaType: mediaType,
     );
   }
 

@@ -216,7 +216,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Future<void> _startGroupCall(BuildContext context) async {
+  Future<void> _startGroupCall(BuildContext context, CallMediaType mediaType) async {
     final appState = AppScope.of(context);
     if (appState.groupCallService.currentCall != null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -224,7 +224,7 @@ class _ChatScreenState extends State<ChatScreen> {
       );
       return;
     }
-    await appState.startGroupCall(widget.conversation);
+    await appState.startGroupCall(widget.conversation, mediaType: mediaType);
   }
 
   Future<void> _toggleBlock(BuildContext context, bool currentlyBlocked) async {
@@ -301,7 +301,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 IconButton(
                   icon: const Icon(Icons.call),
                   tooltip: 'مكالمة صوتية جماعية',
-                  onPressed: () => _startGroupCall(context),
+                  onPressed: () => _startGroupCall(context, CallMediaType.audio),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.videocam),
+                  tooltip: 'مكالمة مرئية جماعية',
+                  onPressed: () => _startGroupCall(context, CallMediaType.video),
                 ),
                 IconButton(
                   icon: const Icon(Icons.info_outline),

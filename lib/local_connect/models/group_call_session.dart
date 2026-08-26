@@ -1,3 +1,5 @@
+import 'call_session.dart' show CallMediaType;
+
 enum GroupCallState { ringing, active, ended }
 
 /// حالة اتصال WebRTC الفعلي مع مشارك مُحدَّد داخل مكالمة جماعية — كل زوج
@@ -30,11 +32,13 @@ class GroupCallSession {
     required this.groupId,
     required this.groupName,
     required this.isInitiator,
+    required this.mediaType,
   }) : startedAt = DateTime.now();
 
   final String callId;
   final String groupId;
   final String groupName;
+  final CallMediaType mediaType;
 
   /// true إن كان هذا الجهاز هو من بدأ المكالمة — هو المُنسِّق الذي يتتبّع
   /// قائمة "النشِطين الآن" ويُبلِغ الجميع بالتحديثات (انظر التوثيق أعلاه).
@@ -43,8 +47,10 @@ class GroupCallSession {
   final DateTime startedAt;
   GroupCallState state = GroupCallState.ringing;
 
-  /// مُرسِلة فقط لدى المُنسِّق: من قَبِل دعوته ولم يُغادر بعد (بصرف النظر عن
-  /// كونه متصلًا فعليًا الآن أم لا يزال ينضم).
+  /// كل من نعرف عنه في هذه المكالمة (بدون نفسي): لدى المُنسِّق هم كل من
+  /// دُعي (سواء انضمّ أم لا يزال ينتظر رده)، ولدى غيره هم فقط من عرفهم عبر
+  /// دعوته أو قائمة نشِطين مُوزَّعة (group_call_roster) أو عرضًا (offer)
+  /// وصله مباشرة.
   final Map<String, GroupCallParticipant> participants = {};
 
   Duration get elapsed => DateTime.now().difference(startedAt);
