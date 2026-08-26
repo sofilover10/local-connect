@@ -9,10 +9,13 @@ import android.media.AudioManager
 import android.media.Ringtone
 import android.media.RingtoneManager
 import android.media.ToneGenerator
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
@@ -55,6 +58,10 @@ class RingtoneHandler(private val context: Context) : MethodChannel.MethodCallHa
                 cancelIncomingCallNotification()
                 result.success(null)
             }
+            "ensureFullScreenIntentPermission" -> {
+                ensureFullScreenIntentPermission()
+                result.success(null)
+            }
             else -> result.notImplemented()
         }
     }
@@ -63,6 +70,13 @@ class RingtoneHandler(private val context: Context) : MethodChannel.MethodCallHa
     /// يجعل اسم المتصل يظهر فعليًا حتى لو كانت الشاشة مقفلة أو التطبيق غير
     /// مفتوح إطلاقًا؛ بدونه، صوت الرنين (playRingtone) يعمل لكن لا يوجد أي
     /// مؤشر بصري لمن يتصل قبل أن يفتح المستخدم التطبيق بنفسه يدويًا.
+    ///
+    /// **أزرار رد/رفض على الإشعار نفسه** ضرورية بصرف النظر عن نجاح الشاشة
+    /// الكاملة أم لا: أندرويد 14+ يتطلب صلاحية خاصة إضافية (غير الإذن في
+    /// المانيفست) قد لا تُمنَح تلقائيًا لتطبيق مُثبَّت يدويًا (خارج متجر
+    /// Google)، فيُخفِّض النظام الإشعار إلى إشعار عادي بلا فتح تلقائي لشاشة
+    /// المكالمة — عندها الأزرار هنا هي الطريقة الوحيدة للرد أو الرفض دون
+    /// فتح التطبيق يدويًا والانتظار حتى يُحمَّل.
     private fun showIncomingCallNotification(callerName: String) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -87,6 +101,17 @@ class RingtoneHandler(private val context: Context) : MethodChannel.MethodCallHa
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
+        val answerIntent = Intent(context, CallActionReceiver::class.java)
+            .setAction(CallActionReceiver.ACTION_ANSWER)
+        val answerPendingIntent = PendingIntent.getBroadcast(
+            context, 1, answerIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val rejectIntent = Intent(context, CallActionReceiver::class.java)
+            .setAction(CallActionReceiver.ACTION_REJECT)
+        val rejectPendingIntent = PendingIntent.getBroadcast(
+            context, 2, rejectIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
         val notification = NotificationCompat.Builder(context, CALL_CHANNEL_ID)
             .setContentTitle("مكالمة واردة")
             .setContentText(callerName)
@@ -95,11 +120,34 @@ class RingtoneHandler(private val context: Context) : MethodChannel.MethodCallHa
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setFullScreenIntent(fullScreenPendingIntent, true)
             .setContentIntent(fullScreenPendingIntent)
+            .addAction(android.R.drawable.sym_action_call, "رد", answerPendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "رفض", rejectPendingIntent)
             .setAutoCancel(true)
             .setOngoing(true)
             .build()
 
         manager.notify(CALL_NOTIFICATION_ID, notification)
+    }
+
+    /// أندرويد 14+ يتطلب صلاحية خاصة إضافية (منفصلة عن مجرّد إعلان
+    /// USE_FULL_SCREEN_INTENT في المانيفست) لعرض إشعار المكالمة كشاشة كاملة
+    /// فعليًا فوق شاشة القفل — قد لا تُمنَح تلقائيًا لتطبيق مُثبَّت يدويًا
+    /// خارج متجر Google. إن لم تكن ممنوحة، نفتح شاشة الإعدادات الخاصة بها
+    /// مباشرة حتى يفعّلها المستخدم بنفسه بضغطة واحدة؛ بدون هذا التحقق
+    /// الاستباقي، الإشعار يُخفَّض بصمت إلى إشعار عادي ولا يظهر شيء فوق
+    /// القفل رغم أن صوت الرنين يعمل بشكل طبيعي (لأنه مستقل تمامًا).
+    private fun ensureFullScreenIntentPermission() {
+        if (Build.VERSION.SDK_INT < 34) return
+        if (NotificationManagerCompat.from(context).canUseFullScreenIntent()) return
+        try {
+            val intent = Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT)
+                .setData(Uri.parse("package:${context.packageName}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+        } catch (_: Exception) {
+            // بعض الشرائح المخصَّصة لا تدعم هذه الشاشة تحديدًا — لا داعٍ
+            // لإسقاط أي شيء، صوت الرنين يبقى يعمل بلا هذه الصلاحية.
+        }
     }
 
     private fun cancelIncomingCallNotification() {
@@ -172,6 +220,6 @@ class RingtoneHandler(private val context: Context) : MethodChannel.MethodCallHa
 
     companion object {
         private const val CALL_CHANNEL_ID = "local_connect_incoming_call"
-        private const val CALL_NOTIFICATION_ID = 2
+        const val CALL_NOTIFICATION_ID = 2
     }
 }

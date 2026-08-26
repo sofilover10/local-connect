@@ -78,6 +78,12 @@
             android:name=".LocalConnectForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync|mediaProjection"/>
+        <!-- يستقبل ضغطة "رد"/"رفض" من إشعار المكالمة الواردة — انظر
+             CallActionReceiver. exported=false لأنه يُستهدَف فقط عبر Intent
+             صريح من PendingIntent يبنيه التطبيق نفسه، لا من تطبيق آخر. -->
+        <receiver
+            android:name=".CallActionReceiver"
+            android:exported="false"/>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

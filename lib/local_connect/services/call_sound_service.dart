@@ -21,6 +21,12 @@ class CallSoundService {
       _invoke('showIncomingCallNotification', {'callerName': callerName});
   Future<void> cancelIncomingCallNotification() => _invoke('cancelIncomingCallNotification');
 
+  /// يتحقق (ويطلب إن لزم عبر شاشة إعدادات النظام) صلاحية أندرويد 14+
+  /// الخاصة بعرض إشعارات الشاشة الكاملة فعليًا فوق شاشة القفل — بدونها،
+  /// إشعار المكالمة الواردة يُخفَّض بصمت لإشعار عادي رغم عمل الرنين بشكل
+  /// طبيعي. يُستدعى مرة واحدة من [AppState.ensureNotificationPermission].
+  Future<void> ensureFullScreenIntentPermission() => _invoke('ensureFullScreenIntentPermission');
+
   Future<void> _invoke(String method, [Map<String, dynamic>? arguments]) async {
     try {
       await _channel.invokeMethod(method, arguments);

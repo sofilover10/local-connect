@@ -35,11 +35,18 @@ class GroupCallService extends ChangeNotifier {
     required GroupCallSignalSender sendSignal,
     required String Function() localInternalNumber,
     required String Function() localDisplayName,
+    String? Function(String internalNumber)? contactDisplayNameFor,
   })  : _sendSignal = sendSignal,
         _localInternalNumber = localInternalNumber,
-        _localDisplayName = localDisplayName;
+        _localDisplayName = localDisplayName,
+        _contactDisplayNameFor = contactDisplayNameFor;
 
   final GroupCallSignalSender _sendSignal;
+
+  /// راجع التوثيق المطابق في CallService._contactDisplayNameFor — نفس
+  /// السبب والأولوية هنا: اسم جهة اتصال محفوظ محليًا يُفضَّل على الاسم الذي
+  /// يدّعيه العضو نفسه عبر الشبكة.
+  final String? Function(String internalNumber)? _contactDisplayNameFor;
   final String Function() _localInternalNumber;
   final String Function() _localDisplayName;
 
@@ -234,7 +241,9 @@ class GroupCallService extends ChangeNotifier {
     }
 
     final mediaType = payload['mediaType'] == 'video' ? CallMediaType.video : CallMediaType.audio;
-    final callerDisplayName = payload['callerDisplayName'] as String? ?? senderInternalNumber;
+    final callerDisplayName = _contactDisplayNameFor?.call(senderInternalNumber) ??
+        (payload['callerDisplayName'] as String?) ??
+        senderInternalNumber;
     final session = GroupCallSession(
       callId: callId,
       groupId: groupId,

@@ -96,6 +96,7 @@ class LocalConnectAppState extends ChangeNotifier {
     sendSignal: sendCallSignal,
     localInternalNumber: () => identity.internalNumber,
     localDisplayName: () => identity.displayName,
+    contactDisplayNameFor: _contactDisplayNameFor,
   );
 
   /// مكالمات صوتية جماعية (mesh) — نفس فكرة [callService] لكن لعدة أطراف؛
@@ -104,7 +105,15 @@ class LocalConnectAppState extends ChangeNotifier {
     sendSignal: sendCallSignal,
     localInternalNumber: () => identity.internalNumber,
     localDisplayName: () => identity.displayName,
+    contactDisplayNameFor: _contactDisplayNameFor,
   );
+
+  /// راجع توثيق CallService._contactDisplayNameFor — يُفضَّل اسم جهة اتصال
+  /// محفوظ محليًا على الاسم الذي يدّعيه المتصل نفسه عبر الشبكة.
+  String? _contactDisplayNameFor(String internalNumber) {
+    final matches = contacts.where((c) => c.internalNumber == internalNumber);
+    return matches.isEmpty ? null : matches.first.displayName;
+  }
 
   late DeviceIdentity identity;
   bool isReady = false;
@@ -240,6 +249,7 @@ class LocalConnectAppState extends ChangeNotifier {
       // منصّات/بيئات بلا معالج فعلي لهذه القناة (اختبارات الودجت مثلًا) —
       // لا يجب أن يُسقِط ذلك الشاشة الرئيسية بالكامل.
     }
+    unawaited(callService.ensureFullScreenIntentPermission());
   }
 
   /// يطلب صلاحيات البلوتوث اللازمة للاكتشاف/الاتصال. يختلف الاسم المطلوب

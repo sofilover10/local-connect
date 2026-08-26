@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:uuid/uuid.dart';
@@ -29,13 +30,35 @@ class CallService extends ChangeNotifier {
     required CallSignalSender sendSignal,
     required String Function() localInternalNumber,
     required String Function() localDisplayName,
+    String? Function(String internalNumber)? contactDisplayNameFor,
   })  : _sendSignal = sendSignal,
         _localInternalNumber = localInternalNumber,
-        _localDisplayName = localDisplayName;
+        _localDisplayName = localDisplayName,
+        _contactDisplayNameFor = contactDisplayNameFor {
+    // يستقبل ضغطة زر "رد"/"رفض" على إشعار المكالمة الواردة الأصلي (انظر
+    // CallActionReceiver.kt على جانب أندرويد) — ضروري لأن الشاشة الكاملة
+    // قد لا تُفتَح تلقائيًا (أندرويد 14+ يقيّدها)، فيبقى هذان الزرّان
+    // الطريقة الوحيدة للتفاعل مع المكالمة دون فتح التطبيق يدويًا أولًا.
+    const MethodChannel('local_connect/call_actions').setMethodCallHandler((call) async {
+      switch (call.method) {
+        case 'answer':
+          await acceptCall();
+        case 'reject':
+          await rejectCall();
+      }
+    });
+  }
 
   final CallSignalSender _sendSignal;
   final String Function() _localInternalNumber;
   final String Function() _localDisplayName;
+
+  /// يبحث عن اسم جهة اتصال محفوظ محليًا لرقم داخلي معيَّن، أو null إن لم
+  /// تكن محفوظة. عند وجوده، يُفضَّل على الاسم الذي يدّعيه الطرف المتصل نفسه
+  /// عبر الشبكة (`callerDisplayName`) — فجهة اتصال حفظتَها أنت باسم تعرفه
+  /// أوثق من اسم قد لا يكون الطرف الآخر ضبطه أصلًا (يظهر عندها بالاسم
+  /// الافتراضي العام لأي هوية جديدة في التطبيق).
+  final String? Function(String internalNumber)? _contactDisplayNameFor;
 
   static const Map<String, dynamic> _rtcConfiguration = {
     'iceServers': [
@@ -62,6 +85,9 @@ class CallService extends ChangeNotifier {
   bool isMuted = false;
   bool isSpeakerOn = false;
   bool isCameraOff = false;
+
+  /// راجع CallSoundService.ensureFullScreenIntentPermission.
+  Future<void> ensureFullScreenIntentPermission() => _sound.ensureFullScreenIntentPermission();
 
   void _safeNotify() {
     if (!_disposed) notifyListeners();
@@ -172,7 +198,9 @@ class CallService extends ChangeNotifier {
     currentCall = CallSession(
       callId: callId,
       peerInternalNumber: senderInternalNumber,
-      peerDisplayName: (payload['callerDisplayName'] as String?) ?? senderInternalNumber,
+      peerDisplayName: _contactDisplayNameFor?.call(senderInternalNumber) ??
+          (payload['callerDisplayName'] as String?) ??
+          senderInternalNumber,
       direction: CallDirection.incoming,
       mediaType: mediaType,
     );
