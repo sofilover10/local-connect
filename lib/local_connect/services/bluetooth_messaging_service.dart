@@ -56,9 +56,9 @@ class BluetoothMessagingService {
     if (bytes is! Uint8List) return;
     final buffer = _buffers.putIfAbsent(address, () => StringBuffer());
     buffer.write(utf8.decode(bytes, allowMalformed: true));
-    // نفس حد [MessagingSocketService._maxBufferedBytes] وسببه: بيانات بلا
-    // نهاية سطر تتراكم إلى الأبد وتستنزف الذاكرة لولا هذا الحد.
-    if (buffer.length > 64 * 1024 * 1024) {
+    // نفس حد [MessagingSocketService._maxBufferedBytes] وسببه (بما فيه رفعه
+    // لاحقًا حتى لا يقطع مرفقات كبيرة مُرمَّزة base64 بصمت — راجع التعليق هناك).
+    if (buffer.length > 256 * 1024 * 1024) {
       _buffers.remove(address);
       return;
     }

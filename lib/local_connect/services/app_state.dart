@@ -240,6 +240,7 @@ class LocalConnectAppState extends ChangeNotifier {
   /// تبقى تعمل). تُستدعى مرة واحدة فقط من أول شاشة رئيسية تُبنى، حيث
   /// تكون شاشة (Activity) فعليًا متصلة ليمكن عرض حوار النظام.
   bool _notificationPermissionRequested = false;
+  static const _fullScreenIntentPromptKey = 'full_screen_intent_prompted';
   Future<void> ensureNotificationPermission() async {
     if (_notificationPermissionRequested) return;
     _notificationPermissionRequested = true;
@@ -249,7 +250,17 @@ class LocalConnectAppState extends ChangeNotifier {
       // منصّات/بيئات بلا معالج فعلي لهذه القناة (اختبارات الودجت مثلًا) —
       // لا يجب أن يُسقِط ذلك الشاشة الرئيسية بالكامل.
     }
-    unawaited(callService.ensureFullScreenIntentPermission());
+    // مرة واحدة *فعليًا* عبر عمر التثبيت، لا فقط عبر عمر هذا الكائن —
+    // ensureNotificationPermission تُستدعى من أول بناء لشاشة رئيسية، وهذا
+    // يتكرر مع كل إعادة تشغيل للعملية (أندرويد قد يقتل الخدمة الخلفية
+    // ويُعيد تشغيلها، أو المستخدم يُغلِق التطبيق ويعيد فتحه). بدون هذا
+    // التخزين الدائم، فتح شاشة إعدادات "الإشعار بشاشة كاملة" (التالية) كان
+    // يتكرر عند كل فتح للتطبيق قبل أن يمنح المستخدم الصلاحية فعليًا — يبدو
+    // للمستخدم وكأن التطبيق "يُغلَق" فجأة وينتقل لشاشة أخرى دون تفسير.
+    if (_store.identityBox.get(_fullScreenIntentPromptKey) == null) {
+      await _store.identityBox.put(_fullScreenIntentPromptKey, 'true');
+      unawaited(callService.ensureFullScreenIntentPermission());
+    }
   }
 
   /// يطلب صلاحيات البلوتوث اللازمة للاكتشاف/الاتصال. يختلف الاسم المطلوب

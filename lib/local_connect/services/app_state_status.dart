@@ -7,7 +7,6 @@ extension StatusExtension on LocalConnectAppState {
   Future<void> postStatus({String? text, String? filePath, StatusKind kind = StatusKind.text}) async {
     final trimmedText = text?.trim();
     if (kind == StatusKind.text && (trimmedText == null || trimmedText.isEmpty)) return;
-    if (contacts.isEmpty) return;
 
     String? attachmentFileName;
     String? base64Data;

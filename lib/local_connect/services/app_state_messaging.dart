@@ -308,10 +308,15 @@ extension MessagingExtension on LocalConnectAppState {
     String peerInternalNumber,
     Map<String, dynamic> payload,
   ) async {
+    final timeout = _deliveryTimeoutFor(payload);
     final peer = discovery.peerByInternalNumber(peerInternalNumber);
     if (peer != null) {
-      final delivered =
-          await socket.sendDirect(address: peer.address, port: peer.tcpPort, payload: payload);
+      final delivered = await socket.sendDirect(
+        address: peer.address,
+        port: peer.tcpPort,
+        payload: payload,
+        timeout: timeout,
+      );
       if (delivered) return MessageStatus.delivered;
     }
 
@@ -322,15 +327,20 @@ extension MessagingExtension on LocalConnectAppState {
     if (manualAddress != null) {
       final parsed = InternetAddress.tryParse(manualAddress);
       if (parsed != null) {
-        final delivered =
-            await socket.sendDirect(address: parsed, port: socket.preferredPort, payload: payload);
+        final delivered = await socket.sendDirect(
+          address: parsed,
+          port: socket.preferredPort,
+          payload: payload,
+          timeout: timeout,
+        );
         if (delivered) return MessageStatus.delivered;
       }
     }
 
     final bluetoothAddress = contact?.bluetoothAddress;
     if (bluetoothAddress != null) {
-      final delivered = await bluetoothMessaging.sendDirect(address: bluetoothAddress, payload: payload);
+      final delivered =
+          await bluetoothMessaging.sendDirect(address: bluetoothAddress, payload: payload, timeout: timeout);
       if (delivered) return MessageStatus.delivered;
     }
 
@@ -338,6 +348,21 @@ extension MessagingExtension on LocalConnectAppState {
     if (sentViaRelay) return MessageStatus.sent;
 
     return MessageStatus.failed;
+  }
+
+  /// المهلة الافتراضية (3 ثوانٍ في MessagingSocketService.sendDirect) كافية
+  /// لرسالة نصية عادية، لكنها قصيرة جدًا لمرفق كبير: الاتصال + كتابة كل
+  /// البايتات + انتظار الطرف الآخر يُحلِّل JSON بحجم ميغابايتات ويُقِرّ
+  /// الاستلام قد يتجاوز 3 ثوانٍ بسهولة حتى على شبكة محلية جيدة، فتفشل
+  /// الرسالة بصمت رغم وصولها فعليًا (كان هذا السبب الفعلي وراء عدم وصول
+  /// ملفات كبيرة مثل APK رغم رفع حد الذاكرة في MessagingSocketService).
+  /// نفترض معدل نقل متحفظ 2 ميغابايت/ثانية (يشمل بلوتوث الأبطأ) زائد 5
+  /// ثوانٍ ثابتة للاتصال والمعالجة.
+  Duration _deliveryTimeoutFor(Map<String, dynamic> payload) {
+    final data = payload['data'];
+    if (data is! String || data.length < 200 * 1024) return const Duration(seconds: 3);
+    final estimatedSeconds = 5 + (data.length / (2 * 1024 * 1024)).ceil();
+    return Duration(seconds: estimatedSeconds.clamp(3, 180));
   }
 
   /// يُستخدَم من [CallService] لإرسال إشارات WebRTC (عروض/ردود/مرشّحات ICE)

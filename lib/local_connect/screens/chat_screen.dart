@@ -321,7 +321,16 @@ class _ChatScreenState extends State<ChatScreen> {
         _isRecording = false;
         _recordingElapsed = Duration.zero;
       });
-      if (path == null || !context.mounted) return;
+      if (!context.mounted) return;
+      if (path == null) {
+        // المسجّل لم يُنتِج ملفًا (مثلًا تسجيل قصير جدًا، أو خطأ داخلي في
+        // الحزمة) — بدون هذا التنبيه، يبدو الأمر للمستخدم وكأن التسجيل
+        // "اختفى" بصمت دون أي تفسير أو رسالة صوتية مُرسَلة.
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذّر حفظ التسجيل الصوتي — جرّب تسجيلًا أطول قليلًا')),
+        );
+        return;
+      }
       await AppScope.of(context).sendAttachment(
         conversationId: widget.conversation.id,
         filePath: path,

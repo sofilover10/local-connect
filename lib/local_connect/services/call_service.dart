@@ -480,7 +480,19 @@ class CallService extends ChangeNotifier {
       for (final track in stream.getTracks()) {
         await track.stop();
       }
+      // إيقاف المسارات (getTracks/stop أعلاه) لا يُصفِّر بالضرورة وضع صوت
+      // النظام (AudioManager على أندرويد) الذي تضبطه المكالمة عند بدئها
+      // (سمّاعة خارجية/داخلية) — يبقى أحيانًا "عالقًا" على وضع المكالمة رغم
+      // توقف كل المسارات فعليًا، فيظهر مؤشر الميكروفون في النظام وكأنه لا
+      // يزال نشطًا. إعادته للوضع الطبيعي (سمّاعة داخلية) هنا صراحة.
+      try {
+        await Helper.setSpeakerphoneOn(false);
+      } catch (_) {
+        // لا شيء — تحسين إضافي، ليس شرطًا لإنهاء المكالمة بنجاح.
+      }
     }
+    isSpeakerOn = false;
+    isMuted = false;
     // ضبط srcObject على مُصيِّر لم يُهيَّأ بعد (initialize()) يرمي استثناءً —
     // يحدث هذا فعليًا عند dispose لتطبيق لم تُجرَ فيه أي مكالمة إطلاقًا قط.
     if (_renderersInitialized) {
