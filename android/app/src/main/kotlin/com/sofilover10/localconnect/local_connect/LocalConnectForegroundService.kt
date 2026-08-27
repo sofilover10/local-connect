@@ -50,7 +50,7 @@ class LocalConnectForegroundService : Service() {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "LocalConnect نشط بالخلفية",
+                "مدى نشط بالخلفية",
                 NotificationManager.IMPORTANCE_MIN,
             )
             manager.createNotificationChannel(channel)
@@ -67,7 +67,7 @@ class LocalConnectForegroundService : Service() {
         }
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("LocalConnect يعمل بالخلفية")
+            .setContentTitle("مدى يعمل بالخلفية")
             .setContentText("جاهز لاستقبال الرسائل والمكالمات")
             .setSmallIcon(android.R.drawable.stat_sys_download_done)
             .setPriority(NotificationCompat.PRIORITY_MIN)

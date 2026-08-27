@@ -22,9 +22,14 @@ import 'status_tab.dart';
 import 'wifi_direct_tab.dart';
 
 Future<void> _showAddMenu(BuildContext context) async {
+  // context الخارجي (معطى هنا) مستقر طوال بقاء الشاشة الرئيسية، خلافًا
+  // لـcontext الداخلي لـbuilder المرتبط بعنصر القائمة السفلية نفسها —
+  // ذاك يُلغى بمجرد انتهاء حركة إغلاقها (~300ms)، وهي أقصر بكثير من الوقت
+  // الذي قد يستغرقه المستخدم في ملء حوار إنشاء مجموعة (اختيار أعضاء
+  // متعددين، كتابة اسم...)، فتفشل عملية الإنشاء بصمت تام عند الحفظ.
   await showModalBottomSheet<void>(
     context: context,
-    builder: (context) => SafeArea(
+    builder: (sheetContext) => SafeArea(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -32,7 +37,7 @@ Future<void> _showAddMenu(BuildContext context) async {
             leading: const Icon(Icons.person_add),
             title: const Text('إضافة جهة اتصال'),
             onTap: () {
-              Navigator.pop(context);
+              Navigator.pop(sheetContext);
               showAddContactDialog(context);
             },
           ),
@@ -40,7 +45,7 @@ Future<void> _showAddMenu(BuildContext context) async {
             leading: const Icon(Icons.group_add),
             title: const Text('مجموعة جديدة'),
             onTap: () {
-              Navigator.pop(context);
+              Navigator.pop(sheetContext);
               showCreateGroupDialog(context);
             },
           ),
@@ -48,7 +53,7 @@ Future<void> _showAddMenu(BuildContext context) async {
             leading: const Icon(Icons.campaign),
             title: const Text('قناة جديدة'),
             onTap: () {
-              Navigator.pop(context);
+              Navigator.pop(sheetContext);
               showCreateGroupDialog(context, isChannel: true);
             },
           ),
@@ -64,7 +69,7 @@ Future<void> _showAbout(BuildContext context) async {
   showDialog<void>(
     context: context,
     builder: (context) => AlertDialog(
-      title: const Text('LocalConnect 🇵🇸'),
+      title: const Text('مدى | Mada'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,

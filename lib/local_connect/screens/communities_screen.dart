@@ -99,9 +99,13 @@ class CommunityDetailScreen extends StatelessWidget {
             !liveCommunity.linkedConversationIds.contains(c.id))
         .toList();
 
+    // context الخارجي (معطى هنا) مستقر طوال بقاء هذه الشاشة، خلافًا
+    // لـcontext الداخلي لـbuilder المرتبط بعنصر القائمة السفلية نفسها —
+    // ذاك يُلغى بمجرد انتهاء حركة إغلاقها، وهي أقصر بكثير من وقت ملء
+    // حوار إنشاء مجموعة، فتفشل عملية الإنشاء/الإدراج بصمت.
     await showModalBottomSheet<void>(
       context: context,
-      builder: (context) => SafeArea(
+      builder: (sheetContext) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -109,7 +113,7 @@ class CommunityDetailScreen extends StatelessWidget {
               leading: const Icon(Icons.group_add),
               title: const Text('إنشاء مجموعة جديدة وإدراجها'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.pop(sheetContext);
                 showCreateGroupDialog(
                   context,
                   onCreated: (conversation) =>
@@ -125,7 +129,7 @@ class CommunityDetailScreen extends StatelessWidget {
                   title: Text(group.peerDisplayName),
                   subtitle: const Text('إدراج مجموعة تملكها أصلًا'),
                   onTap: () {
-                    Navigator.pop(context);
+                    Navigator.pop(sheetContext);
                     appState.addGroupToCommunity(liveCommunity.id, group.id);
                   },
                 ),

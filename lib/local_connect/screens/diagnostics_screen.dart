@@ -84,7 +84,9 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                   ListTile(
                     leading: Icon(
                       check.ok ? Icons.check_circle : Icons.error,
-                      color: check.ok ? Colors.green : Colors.red,
+                      color: check.ok
+                          ? Theme.of(context).colorScheme.primary
+                          : Theme.of(context).colorScheme.error,
                     ),
                     title: Text(check.label),
                     subtitle: Text(check.detail),

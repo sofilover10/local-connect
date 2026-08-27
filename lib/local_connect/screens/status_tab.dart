@@ -17,9 +17,15 @@ class StatusTab extends StatelessWidget {
   final LocalConnectAppState appState;
 
   Future<void> _showPostMenu(BuildContext context) async {
+    // context الخارجي (معطى هنا) مستقر طوال بقاء تبويب الحالات، خلافًا
+    // لـcontext الداخلي لـbuilder المرتبط بعنصر القائمة السفلية نفسها —
+    // ذاك يُلغى بمجرد انتهاء حركة إغلاقها، وهي أسرع بكثير من الوقت الذي
+    // يستغرقه منتقي الملفات (المستخدم يتصفّح لثوانٍ)، فتفشل كل فحوصات
+    // context.mounted اللاحقة بصمت. راجع نفس الشرح المُفصَّل في
+    // ChatScreen._showAttachMenu.
     await showModalBottomSheet<void>(
       context: context,
-      builder: (context) => SafeArea(
+      builder: (sheetContext) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -27,7 +33,7 @@ class StatusTab extends StatelessWidget {
               leading: const Icon(Icons.text_fields),
               title: const Text('حالة نصية'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.pop(sheetContext);
                 _postTextStatus(context);
               },
             ),
@@ -35,7 +41,7 @@ class StatusTab extends StatelessWidget {
               leading: const Icon(Icons.image),
               title: const Text('صورة أو ملف'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.pop(sheetContext);
                 _postFileStatus(context);
               },
             ),

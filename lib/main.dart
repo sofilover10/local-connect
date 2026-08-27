@@ -87,13 +87,12 @@ class _LocalConnectAppState extends State<LocalConnectApp> {
     return AppScope(
       state: widget.appState,
       child: MaterialApp(
-        title: 'LocalConnect',
+        title: 'Mada',
         locale: const Locale('ar'),
-        // أخضر واتساب المعروف (#25D366) — هوية بصرية مألوفة لمستخدمي تطبيقات
-        // المحادثة الشائعة بدل الأخضر المزرق (teal) الافتراضي السابق. الوضع
-        // الداكن يتّبع إعداد النظام تلقائيًا (themeMode.system الافتراضي)؛
-        // بدون darkTheme صريح هنا، كان التطبيق يبقى بالوضع الفاتح دائمًا حتى
-        // لو كان النظام بالكامل بوضع داكن.
+        // هوية "مدى" (Deep Teal/Muted Olive/Warm Stone) — انظر app_theme.dart.
+        // الوضع الداكن يتّبع إعداد النظام تلقائيًا (themeMode.system
+        // الافتراضي)؛ بدون darkTheme صريح هنا، كان التطبيق يبقى بالوضع
+        // الفاتح دائمًا حتى لو كان النظام بالكامل بوضع داكن.
         theme: AppTheme.light,
         darkTheme: AppTheme.dark,
         // builder يلفّ كل شجرة المسارات (Navigator) — هذا يجعل شاشة المكالمة

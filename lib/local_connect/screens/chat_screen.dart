@@ -178,9 +178,18 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _showAttachMenu(BuildContext context) async {
+    // مهم: أي دالة (مثل _pickAndSendFile) تُستدعى من onTap أدناه بعد
+    // Navigator.pop **يجب** أن تستخدم context الخارجي المستقر (معطى هنا)،
+    // وليس context الداخلي لـbuilder — ذاك مرتبط بعنصر القائمة السفلية
+    // نفسها التي أُغلِقت للتو، ويُلغى (mounted=false) بمجرد انتهاء حركة
+    // إغلاقها (~300ms). عمليات سريعة (فتح حوار فورًا) قد لا تُلاحَظ، لكن
+    // عملية طويلة كمنتقي الملفات (المستخدم يتصفّح ملفاته لثوانٍ) تتجاوز
+    // هذه المهلة بسهولة — فتفشل كل فحوصات context.mounted اللاحقة بصمت
+    // تام دون أي رسالة، وهذا بالضبط ما كان يسبب "لا يحدث شيء" عند اختيار
+    // صورة/ملف رغم وجود تنبيهات خطأ مُضافة أصلًا في تلك الدالة.
     await showModalBottomSheet<void>(
       context: context,
-      builder: (context) => SafeArea(
+      builder: (sheetContext) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -188,7 +197,7 @@ class _ChatScreenState extends State<ChatScreen> {
               leading: const Icon(Icons.insert_drive_file),
               title: const Text('ملف'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.pop(sheetContext);
                 _pickAndSendFile(context);
               },
             ),
@@ -196,7 +205,7 @@ class _ChatScreenState extends State<ChatScreen> {
               leading: const Icon(Icons.bar_chart),
               title: const Text('استطلاع'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.pop(sheetContext);
                 _showCreatePollDialog(context);
               },
             ),
@@ -204,7 +213,7 @@ class _ChatScreenState extends State<ChatScreen> {
               leading: const Icon(Icons.event),
               title: const Text('فعالية'),
               onTap: () {
-                Navigator.pop(context);
+                Navigator.pop(sheetContext);
                 _showCreateEventDialog(context);
               },
             ),
