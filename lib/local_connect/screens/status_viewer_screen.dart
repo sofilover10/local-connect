@@ -41,6 +41,21 @@ class _StatusViewerScreenState extends State<StatusViewerScreen> {
     AppScope.of(context).markStatusViewed(_ordered[index].id);
   }
 
+  /// PageView.builder وحده يستجيب فقط لسحب أفقي (swipe)، بلا أي منطقة نقر
+  /// للتنقّل — خلافًا للسلوك المعتاد في واجهات "القصص" (نقر يمين/شمال
+  /// الشاشة للتقدّم/الرجوع)، وهو ما توقّعه المستخدم فعليًا. عند آخر/أول
+  /// حالة، النقر للتقدّم أكثر/الرجوع أكثر لا يفعل شيئًا بدل أن يخرج من
+  /// الشاشة (سلوك مقصود هنا، لا مطلوب تغييره الآن).
+  void _goToPrevious() {
+    if (_index == 0) return;
+    _controller.previousPage(duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+  }
+
+  void _goToNext() {
+    if (_index >= _ordered.length - 1) return;
+    _controller.nextPage(duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
+  }
+
   Future<void> _showViewers(BuildContext context) async {
     final appState = AppScope.of(context);
     final status = _ordered[_index];
@@ -63,9 +78,6 @@ class _StatusViewerScreenState extends State<StatusViewerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final appState = AppScope.of(context);
-    final myNumber = appState.identity.internalNumber;
-
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -73,53 +85,80 @@ class _StatusViewerScreenState extends State<StatusViewerScreen> {
         foregroundColor: Colors.white,
         title: Text(_ordered.first.authorDisplayName),
       ),
-      body: PageView.builder(
-        controller: _controller,
-        itemCount: _ordered.length,
-        onPageChanged: (index) {
-          setState(() => _index = index);
-          _markViewed(index);
-        },
-        itemBuilder: (context, index) {
-          final status = _ordered[index];
-          return Column(
-            children: [
-              Row(
-                children: List.generate(
-                  _ordered.length,
-                  (i) => Expanded(
-                    child: Container(
-                      height: 3,
-                      margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
-                      color: i <= index ? Colors.white : Colors.white24,
-                    ),
+      body: Stack(
+        children: [
+          PageView.builder(
+            controller: _controller,
+            itemCount: _ordered.length,
+            onPageChanged: (index) {
+              setState(() => _index = index);
+              _markViewed(index);
+            },
+            itemBuilder: _buildPage,
+          ),
+          Positioned.fill(
+            child: Row(
+              children: [
+                Expanded(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: _goToPrevious,
                   ),
                 ),
-              ),
-              Expanded(child: _StatusContent(status: status)),
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: Text(
-                  DateFormat.yMd().add_Hm().format(status.postedAt),
-                  style: const TextStyle(color: Colors.white54, fontSize: 12),
-                ),
-              ),
-              if (status.authorInternalNumber == myNumber)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 16),
-                  child: TextButton.icon(
-                    onPressed: () => _showViewers(context),
-                    icon: const Icon(Icons.visibility, color: Colors.white70),
-                    label: Text(
-                      '${status.viewedBy.length} مشاهدة',
-                      style: const TextStyle(color: Colors.white70),
-                    ),
+                Expanded(
+                  flex: 2,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTap: _goToNext,
                   ),
                 ),
-            ],
-          );
-        },
+              ],
+            ),
+          ),
+        ],
       ),
+    );
+  }
+
+  Widget _buildPage(BuildContext context, int index) {
+    final appState = AppScope.of(context);
+    final myNumber = appState.identity.internalNumber;
+    final status = _ordered[index];
+    return Column(
+      children: [
+        Row(
+          children: List.generate(
+            _ordered.length,
+            (i) => Expanded(
+              child: Container(
+                height: 3,
+                margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
+                color: i <= index ? Colors.white : Colors.white24,
+              ),
+            ),
+          ),
+        ),
+        Expanded(child: _StatusContent(status: status)),
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Text(
+            DateFormat.yMd().add_Hm().format(status.postedAt),
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+        ),
+        if (status.authorInternalNumber == myNumber)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: TextButton.icon(
+              onPressed: () => _showViewers(context),
+              icon: const Icon(Icons.visibility, color: Colors.white70),
+              label: Text(
+                '${status.viewedBy.length} مشاهدة',
+                style: const TextStyle(color: Colors.white70),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

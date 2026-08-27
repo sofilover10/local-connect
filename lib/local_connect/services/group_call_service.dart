@@ -744,6 +744,16 @@ class GroupCallService extends ChangeNotifier {
       for (final track in stream.getTracks()) {
         await track.stop();
       }
+      // إيقاف المسارات وحده لا يُصفِّر بالضرورة وضع صوت النظام (AudioManager
+      // على أندرويد) الذي تضبطه المكالمة — يبقى أحيانًا "عالقًا" على وضع
+      // المكالمة رغم توقف كل المسارات فعليًا، فيظهر مؤشر الميكروفون في
+      // النظام وكأنه لا يزال نشطًا حتى بعد إغلاق المكالمة الجماعية بالكامل.
+      // نفس الإصلاح المطبَّق في CallService._teardownMedia للمكالمات الثنائية.
+      try {
+        await Helper.setSpeakerphoneOn(false);
+      } catch (_) {
+        // لا شيء — تحسين إضافي، ليس شرطًا لإنهاء المكالمة بنجاح.
+      }
     }
   }
 

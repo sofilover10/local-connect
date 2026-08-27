@@ -48,3 +48,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# نسخ APK جاهزة للنشر — تُرفَع كأصول (assets) ضمن GitHub Release عبر
+# gh release create، ولا داعٍ لتتبّعها في git نفسه (حجمها كبير وتتغيّر
+# مع كل إصدار).
+/mada-v*.apk
