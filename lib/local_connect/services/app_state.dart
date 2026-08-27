@@ -139,6 +139,7 @@ class LocalConnectAppState extends ChangeNotifier {
   final Map<String, List<ChatMessage>> _messagesByConversation = {};
 
   Timer? _retryTimer;
+  Timer? _updateCheckTimer;
   StreamSubscription<List<PeerInfo>>? _peersSub;
   StreamSubscription<Map<String, dynamic>>? _incomingSub;
   StreamSubscription<Map<String, dynamic>>? _bluetoothIncomingSub;
@@ -217,6 +218,13 @@ class LocalConnectAppState extends ChangeNotifier {
     _safeNotify();
 
     unawaited(_checkForUpdate());
+    // init() يُستدعى مرة واحدة فقط طوال عمر العملية (الخدمة الأمامية
+    // الدائمة تُبقي العملية والـ LocalConnectAppState نفسه حيّين حتى بعد
+    // إغلاق المستخدم للتطبيق وإعادة فتحه لاحقًا)، فبدون هذا المؤقّت الدوري
+    // كان فحص التحديث يحدث مرة واحدة فقط عند أول تشغيل، ولا يُعاد أبدًا —
+    // أي إصدار جديد يصدر بعدها لن يُكتشَف إطلاقًا ما لم يُغلَق التطبيق
+    // إغلاقًا كاملًا (تصفيته من الخلفية فعليًا) ويُعاد فتحه من الصفر.
+    _updateCheckTimer = Timer.periodic(const Duration(hours: 6), (_) => _checkForUpdate());
   }
 
   /// فحص غير حاجب لوجود إصدار أحدث على GitHub Releases. يفشل بصمت بلا
@@ -419,6 +427,7 @@ class LocalConnectAppState extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _retryTimer?.cancel();
+    _updateCheckTimer?.cancel();
     _peersSub?.cancel();
     _incomingSub?.cancel();
     _bluetoothIncomingSub?.cancel();
