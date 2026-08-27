@@ -1,9 +1,21 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../models/message.dart';
 import 'file_message_tile.dart';
 import 'voice_message_player.dart';
+
+/// أسماء الملفات من مصادر مختلفة (كاميرا، معرض، تطبيقات أخرى) لا تحمل
+/// دائمًا نوع MIME موثوقًا، فالفحص بامتداد الاسم أبسط وأوثق هنا.
+bool _isImageAttachment(String? fileName, String? mimeType) {
+  if (mimeType != null && mimeType.startsWith('image/')) return true;
+  if (fileName == null) return false;
+  const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.heic'];
+  final lower = fileName.toLowerCase();
+  return imageExtensions.any(lower.endsWith);
+}
 
 class MessageBubble extends StatelessWidget {
   const MessageBubble({
@@ -162,8 +174,18 @@ class MessageBubble extends StatelessWidget {
       case MessageKind.voice:
         return message.attachmentLocalPath == null
             ? Text('رسالة صوتية (قيد الاستلام...)', style: TextStyle(color: textColor))
-            : VoiceMessagePlayer(filePath: message.attachmentLocalPath!, iconColor: textColor);
+            : VoiceMessagePlayer(
+                filePath: message.attachmentLocalPath!,
+                iconColor: textColor,
+                knownDuration: message.attachmentDurationMs == null
+                    ? null
+                    : Duration(milliseconds: message.attachmentDurationMs!),
+              );
       case MessageKind.file:
+        if (message.attachmentLocalPath != null &&
+            _isImageAttachment(message.attachmentFileName, message.attachmentMimeType)) {
+          return _ImageMessageTile(filePath: message.attachmentLocalPath!);
+        }
         return FileMessageTile(
           fileName: message.attachmentFileName ?? message.text,
           sizeBytes: message.attachmentSizeBytes,
@@ -413,6 +435,62 @@ class _EventContent extends StatelessWidget {
           style: TextStyle(fontSize: 11, color: textColor.withValues(alpha: 0.7)),
         ),
       ],
+    );
+  }
+}
+
+/// معاينة مصغَّرة لصورة مُرسَلة كمرفق عادي (MessageKind.file بصيغة صورة) —
+/// بدون هذا، كل الصور كانت تُعرَض كصف ملف عام (أيقونة + اسم + حجم) بلا أي
+/// معاينة فعلية للصورة نفسها، فيبدو الأمر للمستخدم وكأن الإرسال "لم يعمل"
+/// رغم وصولها فعليًا. الضغط يفتحها بحجم كامل قابل للتكبير.
+class _ImageMessageTile extends StatelessWidget {
+  const _ImageMessageTile({required this.filePath});
+
+  final String filePath;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => _FullScreenImageViewer(filePath: filePath)),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 220, maxHeight: 260),
+          child: Image.file(
+            File(filePath),
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) => Container(
+              width: 160,
+              height: 160,
+              color: Colors.grey.shade300,
+              alignment: Alignment.center,
+              child: const Icon(Icons.broken_image, size: 40, color: Colors.grey),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FullScreenImageViewer extends StatelessWidget {
+  const _FullScreenImageViewer({required this.filePath});
+
+  final String filePath;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(backgroundColor: Colors.black, iconTheme: const IconThemeData(color: Colors.white)),
+      body: Center(
+        child: InteractiveViewer(
+          child: Image.file(File(filePath)),
+        ),
+      ),
     );
   }
 }

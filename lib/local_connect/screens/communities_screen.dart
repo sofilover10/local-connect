@@ -54,13 +54,17 @@ class CommunityDetailScreen extends StatelessWidget {
 
   final Community community;
 
-  Future<void> _leave(BuildContext context) async {
+  Future<void> _leave(BuildContext context, Community liveCommunity, bool isOwner) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('مغادرة المجتمع؟'),
         content: Text(
-          'لن تبقى عضوًا في مجتمع "${community.name}" بعد المغادرة (لا يؤثر هذا على عضويتك في أي مجموعة داخله).',
+          isOwner
+              ? 'أنت مالك مجتمع "${liveCommunity.name}" — لا يوجد نقل ملكية تلقائي في هذه النسخة. '
+                  'بعد مغادرتك، يبقى المجتمع كما هو لدى بقية الأعضاء، لكن لن يقدر أحد إضافة مجموعات '
+                  'جديدة إليه بعد الآن. لا يؤثر هذا على عضويتك في أي مجموعة داخله.'
+              : 'لن تبقى عضوًا في مجتمع "${liveCommunity.name}" بعد المغادرة (لا يؤثر هذا على عضويتك في أي مجموعة داخله).',
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
@@ -69,20 +73,30 @@ class CommunityDetailScreen extends StatelessWidget {
       ),
     );
     if (confirmed != true || !context.mounted) return;
-    await AppScope.of(context).leaveCommunity(community.id);
+    await AppScope.of(context).leaveCommunity(liveCommunity.id);
     if (!context.mounted) return;
-    Navigator.pop(context);
+    // لا حاجة لاستدعاء Navigator.pop يدويًا هنا — إزالة المجتمع محليًا (أعلاه)
+    // يجعل stillExists أدناه false في إعادة البناء التالية، فيُغلِق الشاشة
+    // نفسه تلقائيًا؛ استدعاء pop هنا مباشرة كان يُغلِقها قبل أن يتسنّى لهذا
+    // التنبيه الظهور فعليًا.
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('غادرتَ مجتمع "${liveCommunity.name}"')),
+    );
   }
 
   /// المجتمع بلا أي مجموعة مُدرَجة حاوية فارغة بلا مكان للدردشة إطلاقًا —
   /// هذا هو المسار الوحيد لإضافة مكان دردشة له بعد إنشائه (الإدراج عند
   /// الإنشاء نفسه اختياري ويقتصر على المجموعات المملوكة وقتها فقط).
-  Future<void> _showAddGroupMenu(BuildContext context, LocalConnectAppState appState) async {
+  Future<void> _showAddGroupMenu(
+    BuildContext context,
+    LocalConnectAppState appState,
+    Community liveCommunity,
+  ) async {
     final ownedUnlinked = appState.conversations
         .where((c) =>
             c.isGroup &&
             c.groupOwnerInternalNumber == appState.identity.internalNumber &&
-            !community.linkedConversationIds.contains(c.id))
+            !liveCommunity.linkedConversationIds.contains(c.id))
         .toList();
 
     await showModalBottomSheet<void>(
@@ -99,7 +113,7 @@ class CommunityDetailScreen extends StatelessWidget {
                 showCreateGroupDialog(
                   context,
                   onCreated: (conversation) =>
-                      AppScope.of(context).addGroupToCommunity(community.id, conversation.id),
+                      AppScope.of(context).addGroupToCommunity(liveCommunity.id, conversation.id),
                 );
               },
             ),
@@ -112,7 +126,7 @@ class CommunityDetailScreen extends StatelessWidget {
                   subtitle: const Text('إدراج مجموعة تملكها أصلًا'),
                   onTap: () {
                     Navigator.pop(context);
-                    appState.addGroupToCommunity(community.id, group.id);
+                    appState.addGroupToCommunity(liveCommunity.id, group.id);
                   },
                 ),
             ],
@@ -129,22 +143,30 @@ class CommunityDetailScreen extends StatelessWidget {
     return AnimatedBuilder(
       animation: appState,
       builder: (context, _) {
-        final stillExists = appState.communities.any((c) => c.id == community.id);
-        if (!stillExists) {
+        // يُقرَأ الكائن الحيّ الحالي من appState دائمًا بدل الاعتماد على
+        // المرجع الملتقَط عند فتح الشاشة (community أعلاه) — إن وصل تحديث
+        // (مثلًا community_invite مُعاد بعد إضافة مجموعة أو عضو) بعد فتح هذه
+        // الشاشة، يجب أن تعكس الشاشة القيم الحالية فورًا، لا نسخة قديمة
+        // عالقة وقت الفتح. هذا هو سبب تضارب عدد الأعضاء المُبلَّغ عنه بين
+        // بطاقة القائمة ورأس هذه الشاشة سابقًا.
+        final matches = appState.communities.where((c) => c.id == community.id);
+        if (matches.isEmpty) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (Navigator.canPop(context)) Navigator.pop(context);
           });
           return const SizedBox.shrink();
         }
+        final liveCommunity = matches.first;
+        final isOwner = liveCommunity.ownerInternalNumber == appState.identity.internalNumber;
 
         final linkedGroups = <Conversation>[];
-        for (final id in community.linkedConversationIds) {
-          final matches = appState.conversations.where((c) => c.id == id);
-          if (matches.isNotEmpty) linkedGroups.add(matches.first);
+        for (final id in liveCommunity.linkedConversationIds) {
+          final groupMatches = appState.conversations.where((c) => c.id == id);
+          if (groupMatches.isNotEmpty) linkedGroups.add(groupMatches.first);
         }
 
         return Scaffold(
-          appBar: AppBar(title: Text(community.name)),
+          appBar: AppBar(title: Text(liveCommunity.name)),
           body: ListView(
             children: [
               Padding(
@@ -153,9 +175,9 @@ class CommunityDetailScreen extends StatelessWidget {
                   children: [
                     const CircleAvatar(radius: 36, child: Icon(Icons.diversity_3, size: 36)),
                     const SizedBox(height: 8),
-                    Text(community.name, style: Theme.of(context).textTheme.titleLarge),
+                    Text(liveCommunity.name, style: Theme.of(context).textTheme.titleLarge),
                     Text(
-                      '${community.memberInternalNumbers.length + 1} أعضاء',
+                      '${liveCommunity.memberInternalNumbers.length + 1} أعضاء',
                       style: const TextStyle(color: Colors.grey),
                     ),
                   ],
@@ -169,11 +191,11 @@ class CommunityDetailScreen extends StatelessWidget {
                     const Expanded(
                       child: Text('المجموعات والقنوات', style: TextStyle(fontWeight: FontWeight.bold)),
                     ),
-                    if (community.ownerInternalNumber == appState.identity.internalNumber)
+                    if (isOwner)
                       IconButton(
                         icon: const Icon(Icons.add_circle_outline),
                         tooltip: 'إضافة مجموعة',
-                        onPressed: () => _showAddGroupMenu(context, appState),
+                        onPressed: () => _showAddGroupMenu(context, appState, liveCommunity),
                       ),
                   ],
                 ),
@@ -182,7 +204,7 @@ class CommunityDetailScreen extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                   child: Text(
-                    community.ownerInternalNumber == appState.identity.internalNumber
+                    isOwner
                         ? 'لا توجد مجموعات مُدرَجة بعد — اضغط + لإضافة أو إنشاء واحدة، فيصبح لها مكان للدردشة.'
                         : 'لا توجد مجموعات مُدرَجة، أو لستَ عضوًا في أي منها.',
                   ),
@@ -201,7 +223,7 @@ class CommunityDetailScreen extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.exit_to_app, color: Colors.red),
                 title: const Text('مغادرة المجتمع', style: TextStyle(color: Colors.red)),
-                onTap: () => _leave(context),
+                onTap: () => _leave(context, liveCommunity, isOwner),
               ),
             ],
           ),

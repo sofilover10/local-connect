@@ -345,6 +345,11 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _toggleVoiceRecording(BuildContext context) async {
     if (_isRecording) {
       _recordingTicker?.cancel();
+      // يُحفَظ قبل تصفيره في setState أدناه — هذه هي المدة الحقيقية
+      // المعروفة فعليًا وقت التسجيل (بدل استخراجها لاحقًا من الملف، وهو ما
+      // كان يُظهِر "00:00" لحظيًا في فقاعة الرسالة قبل أن يُحمِّل المشغّل
+      // الملف).
+      final recordedDuration = _recordingElapsed;
       final path = await _recorder.stop();
       setState(() {
         _isRecording = false;
@@ -360,12 +365,18 @@ class _ChatScreenState extends State<ChatScreen> {
         );
         return;
       }
-      await AppScope.of(context).sendAttachment(
+      final sent = await AppScope.of(context).sendAttachment(
         conversationId: widget.conversation.id,
         filePath: path,
         kind: MessageKind.voice,
         mimeType: 'audio/m4a',
+        durationMs: recordedDuration.inMilliseconds,
       );
+      if (!sent && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذّر إرسال التسجيل الصوتي — الملف فارغ أو غير صالح')),
+        );
+      }
       _scrollToBottom();
       return;
     }

@@ -5,10 +5,15 @@ import 'package:flutter/material.dart';
 /// ومدة العرض. كل فقاعة تملك مشغّلها الخاص (بسيط ومعزول، لا حاجة لمشاركة
 /// حالة تشغيل مركزية في هذا الإصدار الأول).
 class VoiceMessagePlayer extends StatefulWidget {
-  const VoiceMessagePlayer({super.key, required this.filePath, required this.iconColor});
+  const VoiceMessagePlayer({super.key, required this.filePath, required this.iconColor, this.knownDuration});
 
   final String filePath;
   final Color iconColor;
+
+  /// المدة الحقيقية المعروفة وقت التسجيل (انظر [ChatMessage.attachmentDurationMs])
+  /// — تُستخدَم كعرض ابتدائي فورًا بدل "00:00" الذي كان يظهر لحظيًا قبل أن
+  /// يُحمِّل المشغّل الملف فعليًا (وهذا لا يحدث إلا بعد أول ضغطة تشغيل).
+  final Duration? knownDuration;
 
   @override
   State<VoiceMessagePlayer> createState() => _VoiceMessagePlayerState();
@@ -17,7 +22,7 @@ class VoiceMessagePlayer extends StatefulWidget {
 class _VoiceMessagePlayerState extends State<VoiceMessagePlayer> {
   final _player = AudioPlayer();
   PlayerState _state = PlayerState.stopped;
-  Duration _duration = Duration.zero;
+  late Duration _duration = widget.knownDuration ?? Duration.zero;
   Duration _position = Duration.zero;
 
   @override

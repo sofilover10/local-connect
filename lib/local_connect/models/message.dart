@@ -18,6 +18,7 @@ class ChatMessage {
     this.attachmentFileName,
     this.attachmentMimeType,
     this.attachmentSizeBytes,
+    this.attachmentDurationMs,
     this.attachmentLocalPath,
     this.editedAt,
     this.isDeleted = false,
@@ -51,6 +52,13 @@ class ChatMessage {
   final String? attachmentFileName;
   final String? attachmentMimeType;
   final int? attachmentSizeBytes;
+
+  /// مدة رسالة صوتية بالمللي ثانية، معروفة وقت التسجيل فعليًا (وليست
+  /// مُستخرَجة لاحقًا من الملف) — تُعرَض فورًا في فقاعة الرسالة (المُرسِلة
+  /// والمُستقبِلة معًا) دون انتظار تحميل المشغّل الصوتي لملف قد يستغرق لحظة،
+  /// وهو ما كان يُظهِر "00:00" لحظيًا قبل تحديثها. null لأي نوع رسالة غير
+  /// صوتية.
+  final int? attachmentDurationMs;
 
   /// المسار على تخزين *هذا* الجهاز حيث تُحفَظ بايتات المرفق فعليًا (سواء
   /// كان الملف الأصلي المُرسَل أو نسخة محفوظة محليًا من مرفق وارد).
@@ -98,6 +106,7 @@ class ChatMessage {
         'attachmentFileName': attachmentFileName,
         'attachmentMimeType': attachmentMimeType,
         'attachmentSizeBytes': attachmentSizeBytes,
+        'attachmentDurationMs': attachmentDurationMs,
         'attachmentLocalPath': attachmentLocalPath,
         'editedAt': editedAt?.toIso8601String(),
         'isDeleted': isDeleted,
@@ -120,6 +129,7 @@ class ChatMessage {
         attachmentFileName: map['attachmentFileName'] as String?,
         attachmentMimeType: map['attachmentMimeType'] as String?,
         attachmentSizeBytes: map['attachmentSizeBytes'] as int?,
+        attachmentDurationMs: map['attachmentDurationMs'] as int?,
         attachmentLocalPath: map['attachmentLocalPath'] as String?,
         editedAt: map['editedAt'] == null ? null : DateTime.parse(map['editedAt'] as String),
         isDeleted: map['isDeleted'] as bool? ?? false,
@@ -150,6 +160,7 @@ class ChatMessage {
     if (attachmentFileName != null) payload['attachmentFileName'] = attachmentFileName;
     if (attachmentMimeType != null) payload['attachmentMimeType'] = attachmentMimeType;
     if (attachmentSizeBytes != null) payload['attachmentSizeBytes'] = attachmentSizeBytes;
+    if (attachmentDurationMs != null) payload['attachmentDurationMs'] = attachmentDurationMs;
     if (base64Data != null) payload['data'] = base64Data;
     if (pollOptions != null) payload['pollOptions'] = pollOptions;
     if (pollVotes != null) payload['pollVotes'] = pollVotes;

@@ -71,17 +71,29 @@ extension CommunitiesExtension on LocalConnectAppState {
         (payload['linkedConversationIds'] as List<dynamic>?)?.whereType<String>().toList() ?? const [];
 
     final existingIndex = communities.indexWhere((c) => c.id == communityId);
-    final community = Community(
-      id: communityId,
-      name: communityName,
-      ownerInternalNumber: senderInternalNumber,
-      memberInternalNumbers: otherMembers,
-      linkedConversationIds: linkedConversationIds,
-    );
+    final Community community;
     if (existingIndex == -1) {
+      community = Community(
+        id: communityId,
+        name: communityName,
+        ownerInternalNumber: senderInternalNumber,
+        memberInternalNumbers: otherMembers,
+        linkedConversationIds: linkedConversationIds,
+      );
       communities.add(community);
     } else {
-      communities[existingIndex] = community;
+      // يُحدَّث الكائن القائم في مكانه بدل استبداله بآخر جديد — أي شاشة
+      // تحمل مرجعًا لهذا الكائن (مثلًا CommunityDetailScreen المفتوحة حاليًا)
+      // يجب أن ترى التحديث فورًا دون إعادة بناء بمرجع قديم عالق، تمامًا
+      // كما تتعامل [_handleGroupInvite] مع المجموعات.
+      community = communities[existingIndex];
+      community.name = communityName;
+      community.memberInternalNumbers
+        ..clear()
+        ..addAll(otherMembers);
+      community.linkedConversationIds
+        ..clear()
+        ..addAll(linkedConversationIds);
     }
     unawaited(_store.communityBox.put(communityId, _store.encode(community.toMap())));
     _safeNotify();

@@ -137,6 +137,7 @@ extension IncomingWireExtension on LocalConnectAppState {
       attachmentFileName: payload['attachmentFileName'] as String?,
       attachmentMimeType: payload['attachmentMimeType'] as String?,
       attachmentSizeBytes: payload['attachmentSizeBytes'] as int?,
+      attachmentDurationMs: payload['attachmentDurationMs'] as int?,
       pollOptions: (payload['pollOptions'] as List<dynamic>?)?.cast<String>(),
       pollVotes: (payload['pollVotes'] as Map<String, dynamic>?)
           ?.map((key, value) => MapEntry(key, (value as List<dynamic>).cast<String>())),

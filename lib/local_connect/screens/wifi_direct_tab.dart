@@ -15,7 +15,7 @@ class WifiDirectTab extends StatefulWidget {
   State<WifiDirectTab> createState() => _WifiDirectTabState();
 }
 
-class _WifiDirectTabState extends State<WifiDirectTab> {
+class _WifiDirectTabState extends State<WifiDirectTab> with WidgetsBindingObserver {
   final Map<String, WifiDirectPeer> _peers = {};
   bool _requestingPermission = false;
   bool _permissionDenied = false;
@@ -25,6 +25,7 @@ class _WifiDirectTabState extends State<WifiDirectTab> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.appState.wifiDirect.peersStream.listen((peers) {
       if (!mounted) return;
       setState(() {
@@ -41,6 +42,21 @@ class _WifiDirectTabState extends State<WifiDirectTab> {
       });
     });
     _start();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // المستخدم قد يفتح إعدادات النظام (تفعيل Wi-Fi، منح صلاحية موقع...)
+    // ويعود لهذه الشاشة دون أن تُعاد فتحها من الصفر — initState لا يُستدعى
+    // مرة أخرى، فتبقى حالة الصلاحية/الاكتشاف القديمة معروضة رغم تغيّرها
+    // فعليًا. إعادة _start عند العودة تتحقق من كل شيء من جديد.
+    if (state == AppLifecycleState.resumed) _start();
   }
 
   Future<void> _start() async {

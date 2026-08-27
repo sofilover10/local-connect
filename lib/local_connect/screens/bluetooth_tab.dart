@@ -16,7 +16,7 @@ class BluetoothTab extends StatefulWidget {
   State<BluetoothTab> createState() => _BluetoothTabState();
 }
 
-class _BluetoothTabState extends State<BluetoothTab> {
+class _BluetoothTabState extends State<BluetoothTab> with WidgetsBindingObserver {
   final Map<String, BluetoothDeviceInfo> _devices = {};
   final Set<String> _connecting = {};
   bool _requestingPermission = false;
@@ -25,11 +25,25 @@ class _BluetoothTabState extends State<BluetoothTab> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.appState.bluetoothTransport.devicesStream.listen((device) {
       if (!mounted) return;
       setState(() => _devices[device.address] = device);
     });
     _start();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // راجع نفس التعليق في WifiDirectTab._WifiDirectTabState — المستخدم قد
+    // يفتح إعدادات بلوتوث النظام ويعود دون إعادة فتح هذه الشاشة من الصفر.
+    if (state == AppLifecycleState.resumed) _start();
   }
 
   Future<void> _start() async {

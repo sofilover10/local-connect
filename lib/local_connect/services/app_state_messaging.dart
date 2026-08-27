@@ -37,6 +37,7 @@ extension MessagingExtension on LocalConnectAppState {
     required MessageKind kind,
     String? mimeType,
     String? caption,
+    int? durationMs,
   }) async {
     if (_isConversationBlocked(conversationId) || !_canPostToConversation(conversationId)) return false;
     final file = File(filePath);
@@ -46,6 +47,10 @@ extension MessagingExtension on LocalConnectAppState {
     }
     final fileName = filePath.split(Platform.pathSeparator).last;
     final sizeBytes = await file.length();
+    if (sizeBytes == 0) {
+      recordError('إرسال مرفق', 'الملف فارغ (0 بايت)، تم رفضه: $filePath');
+      return false;
+    }
 
     final message = ChatMessage(
       id: const Uuid().v4(),
@@ -58,6 +63,7 @@ extension MessagingExtension on LocalConnectAppState {
       attachmentFileName: fileName,
       attachmentMimeType: mimeType,
       attachmentSizeBytes: sizeBytes,
+      attachmentDurationMs: durationMs,
       attachmentLocalPath: filePath,
     );
 
