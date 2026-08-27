@@ -1,7 +1,7 @@
 name: local_connect
 description: "تطبيق مراسلة يعمل أوفلاين على الشبكة المحلية وأونلاين عبر الإنترنت، بأرقام داخلية أو أرقام هاتف."
 publish_to: 'none'
-version: 0.19.1+39
+version: 0.19.2+40
 
 environment:
   sdk: ^3.12.2

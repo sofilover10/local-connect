@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../models/peer_info.dart';
+import '../utils/text_sanitize.dart';
 import 'device_identity_service.dart';
 
 /// اكتشاف الأجهزة الأخرى على نفس الشبكة المحلية عبر بث UDP دوري (broadcast).
@@ -118,7 +119,7 @@ class LanDiscoveryService {
     final payload = jsonEncode({
       'type': 'presence',
       'internalNumber': identity.internalNumber,
-      'displayName': identity.displayName,
+      'displayName': sanitizeExternalText(identity.displayName),
       'tcpPort': tcpPort,
       if (identity.phoneNumber != null) 'phoneNumber': identity.phoneNumber,
     });
@@ -187,7 +188,7 @@ class LanDiscoveryService {
 
     final peer = PeerInfo(
       internalNumber: internalNumber,
-      displayName: map['displayName'] as String? ?? internalNumber,
+      displayName: sanitizeExternalText(map['displayName'] as String? ?? internalNumber),
       address: datagram.address,
       tcpPort: map['tcpPort'] as int? ?? 0,
       lastSeen: DateTime.now(),

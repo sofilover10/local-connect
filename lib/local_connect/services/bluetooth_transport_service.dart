@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
+import '../utils/text_sanitize.dart';
+
 class BluetoothDeviceInfo {
   BluetoothDeviceInfo({required this.name, required this.address});
 
@@ -25,7 +27,10 @@ class BluetoothTransportService {
   Stream<BluetoothDeviceInfo> get devicesStream => _devicesStream ??=
       _devicesChannel.receiveBroadcastStream().map((event) {
         final m = event as Map<dynamic, dynamic>;
-        return BluetoothDeviceInfo(name: m['name'] as String, address: m['address'] as String);
+        return BluetoothDeviceInfo(
+          name: sanitizeExternalText(m['name'] as String),
+          address: m['address'] as String,
+        );
       });
 
   /// أحداث بيانات خامة: `{'address', 'bytes'}` عند استقبال بايتات،

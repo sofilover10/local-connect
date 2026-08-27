@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
+import '../utils/text_sanitize.dart';
+
 class WifiDirectPeer {
   WifiDirectPeer({required this.deviceName, required this.deviceAddress});
 
@@ -39,7 +41,7 @@ class WifiDirectService {
         final list = (event as List).cast<Map<dynamic, dynamic>>();
         return list
             .map((m) => WifiDirectPeer(
-                  deviceName: m['deviceName'] as String,
+                  deviceName: sanitizeExternalText(m['deviceName'] as String),
                   deviceAddress: m['deviceAddress'] as String,
                 ))
             .toList();
