@@ -33,6 +33,20 @@ class _ChatScreenState extends State<ChatScreen> {
   Timer? _recordingTicker;
   Duration _recordingElapsed = Duration.zero;
 
+  /// وقت بدء التسجيل الفعلي بدقة — يُستخدَم لحساب المدة الحقيقية عند
+  /// الإيقاف بدل [_recordingElapsed]، الذي يتزايد بخطوات ثانية كاملة فقط
+  /// (لعرض العدّاد المرئي)، فيبقى صفرًا دائمًا لأي تسجيل أقصر من ثانية
+  /// واحدة — وهذا بالضبط ما كان يُظهِر "00:00" رغم الإصلاح السابق لعرض
+  /// المدة الحقيقية.
+  DateTime? _recordingStartedAt;
+
+  /// يمنع بدء عملية اختيار/إرسال ملف ثانية بينما واحدة قائمة بالفعل — بدونه،
+  /// نقرات متكررة (مثلًا لأن منتقي الملفات تأخّر بالظهور والمستخدم ظنّ أن
+  /// نقرته الأولى لم تُسجَّل) تفتح المنتقي أكثر من مرة، فيُرسَل نفس الملف
+  /// أكثر من مرة كرسائل منفصلة تمامًا (معرّفات مختلفة، فلا يلتقطها تفادي
+  /// التكرار المعتمِد على معرّف الرسالة).
+  bool _isPickingFile = false;
+
   /// معرّف الرسالة قيد التعديل حاليًا، أو null إن كنا نكتب رسالة جديدة.
   String? _editingMessageId;
 
@@ -138,43 +152,85 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _pickAndSendFile(BuildContext context) async {
-    // withData: true يجعل الحزمة تُرجِع بايتات الملف مباشرة، وليس فقط مسارًا
-    // — بعض المصادر (Google Drive، وثائق سحابية أخرى عبر SAF) لا تُرجِع
-    // مسار ملف حقيقي في نظام الملفات يقدر dart:io قراءته لاحقًا، فتفشل
-    // sendAttachment بصمت رغم أن الاختيار نفسه نجح. البايتات تعمل دائمًا
-    // بصرف النظر عن المصدر.
-    final result = await FilePicker.platform.pickFiles(withData: true);
-    if (!context.mounted || result == null) return;
-    final picked = result.files.single;
+    if (_isPickingFile) return;
+    setState(() => _isPickingFile = true);
+    try {
+      // withData: true يجعل الحزمة تُرجِع بايتات الملف مباشرة، وليس فقط
+      // مسارًا — بعض المصادر (Google Drive، وثائق سحابية أخرى عبر SAF) لا
+      // تُرجِع مسار ملف حقيقي في نظام الملفات يقدر dart:io قراءته لاحقًا،
+      // فتفشل sendAttachment بصمت رغم أن الاختيار نفسه نجح. البايتات تعمل
+      // دائمًا بصرف النظر عن المصدر.
+      final result = await FilePicker.platform.pickFiles(withData: true);
+      if (!context.mounted || result == null) return;
+      final picked = result.files.single;
 
-    String? path = picked.path;
-    if (path == null || !await File(path).exists()) {
-      final bytes = picked.bytes;
-      if (bytes == null) {
-        if (!context.mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذّر الوصول لهذا الملف — جرّب اختيار ملف من التخزين المحلي مباشرة')),
-        );
-        return;
+      String? path = picked.path;
+      if (path == null || !await File(path).exists()) {
+        final bytes = picked.bytes;
+        if (bytes == null) {
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('تعذّر الوصول لهذا الملف — جرّب اختيار ملف من التخزين المحلي مباشرة')),
+          );
+          return;
+        }
+        final tempDir = await getTemporaryDirectory();
+        final tempFile = File('${tempDir.path}/${DateTime.now().millisecondsSinceEpoch}_${picked.name}');
+        await tempFile.writeAsBytes(bytes);
+        path = tempFile.path;
       }
-      final tempDir = await getTemporaryDirectory();
-      final tempFile = File('${tempDir.path}/${DateTime.now().millisecondsSinceEpoch}_${picked.name}');
-      await tempFile.writeAsBytes(bytes);
-      path = tempFile.path;
-    }
 
-    if (!context.mounted) return;
-    final sent = await AppScope.of(context).sendAttachment(
-      conversationId: widget.conversation.id,
-      filePath: path,
-      kind: MessageKind.file,
-    );
-    if (!sent && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تعذّر إرسال الملف — تحقق من شاشة "فحص الأخطاء" للتفاصيل')),
+      if (!context.mounted) return;
+      final sent = await AppScope.of(context).sendAttachment(
+        conversationId: widget.conversation.id,
+        filePath: path,
+        kind: MessageKind.file,
+        // بدون هذا، الطرف المستقبِل يحفظ الملف بلا نوع MIME معروف — بعض
+        // تطبيقات فتح الملفات على أندرويد تعتمد على النوع المُصرَّح به في
+        // الـIntent وليس فقط امتداد اسم الملف، فقد يرفض فتح فيديو أو صورة
+        // وصلت بهذه الطريقة رغم أن بايتاتها سليمة تمامًا.
+        mimeType: _guessMimeType(picked.name),
       );
+      if (!sent && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذّر إرسال الملف — تحقق من شاشة "فحص الأخطاء" للتفاصيل')),
+        );
+      }
+      _scrollToBottom();
+    } finally {
+      if (mounted) setState(() => _isPickingFile = false);
     }
-    _scrollToBottom();
+  }
+
+  static const _mimeTypesByExtension = {
+    '.mp4': 'video/mp4',
+    '.mov': 'video/quicktime',
+    '.mkv': 'video/x-matroska',
+    '.avi': 'video/x-msvideo',
+    '.webm': 'video/webm',
+    '.3gp': 'video/3gpp',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.pdf': 'application/pdf',
+    '.mp3': 'audio/mpeg',
+    '.m4a': 'audio/mp4',
+    '.doc': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xls': 'application/vnd.ms-excel',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    '.zip': 'application/zip',
+    '.txt': 'text/plain',
+  };
+
+  String? _guessMimeType(String fileName) {
+    final lower = fileName.toLowerCase();
+    for (final entry in _mimeTypesByExtension.entries) {
+      if (lower.endsWith(entry.key)) return entry.value;
+    }
+    return null;
   }
 
   Future<void> _showAttachMenu(BuildContext context) async {
@@ -358,8 +414,11 @@ class _ChatScreenState extends State<ChatScreen> {
       // المعروفة فعليًا وقت التسجيل (بدل استخراجها لاحقًا من الملف، وهو ما
       // كان يُظهِر "00:00" لحظيًا في فقاعة الرسالة قبل أن يُحمِّل المشغّل
       // الملف).
-      final recordedDuration = _recordingElapsed;
+      final recordedDuration = _recordingStartedAt == null
+          ? _recordingElapsed
+          : DateTime.now().difference(_recordingStartedAt!);
       final path = await _recorder.stop();
+      _recordingStartedAt = null;
       setState(() {
         _isRecording = false;
         _recordingElapsed = Duration.zero;
@@ -402,6 +461,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final tempDir = await getTemporaryDirectory();
     final path = '${tempDir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
     await _recorder.start(const RecordConfig(), path: path);
+    _recordingStartedAt = DateTime.now();
     setState(() {
       _isRecording = true;
       _recordingElapsed = Duration.zero;
@@ -711,8 +771,9 @@ class _ChatScreenState extends State<ChatScreen> {
                     child: Row(
                       children: [
                         IconButton(
-                          onPressed:
-                              (_isRecording || _editingMessageId != null) ? null : () => _showAttachMenu(context),
+                          onPressed: (_isRecording || _editingMessageId != null || _isPickingFile)
+                              ? null
+                              : () => _showAttachMenu(context),
                           icon: const Icon(Icons.attach_file),
                           tooltip: 'إرفاق',
                         ),
