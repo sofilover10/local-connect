@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/date_symbol_data_local.dart';
 
 import 'local_connect/app_scope.dart';
+import 'local_connect/app_theme.dart';
 import 'local_connect/screens/call_screen.dart';
 import 'local_connect/screens/group_call_screen.dart';
 import 'local_connect/screens/home_screen.dart';
@@ -89,8 +90,12 @@ class _LocalConnectAppState extends State<LocalConnectApp> {
         title: 'LocalConnect',
         locale: const Locale('ar'),
         // أخضر واتساب المعروف (#25D366) — هوية بصرية مألوفة لمستخدمي تطبيقات
-        // المحادثة الشائعة بدل الأخضر المزرق (teal) الافتراضي السابق.
-        theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF25D366))),
+        // المحادثة الشائعة بدل الأخضر المزرق (teal) الافتراضي السابق. الوضع
+        // الداكن يتّبع إعداد النظام تلقائيًا (themeMode.system الافتراضي)؛
+        // بدون darkTheme صريح هنا، كان التطبيق يبقى بالوضع الفاتح دائمًا حتى
+        // لو كان النظام بالكامل بوضع داكن.
+        theme: AppTheme.light,
+        darkTheme: AppTheme.dark,
         // builder يلفّ كل شجرة المسارات (Navigator) — هذا يجعل شاشة المكالمة
         // تظهر فوق أي شاشة حالية فور وصول عرض مكالمة، بدل الحاجة لدفعها
         // (push) من داخل كل شاشة على حدة أو تفويت اتصال وارد أثناء التصفّح.

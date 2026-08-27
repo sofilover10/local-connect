@@ -12,6 +12,11 @@
 .swiftpm/
 migrate_working_dir/
 
+# ملفات مؤقتة يكتبها تطبيق مزامنة Google Drive على هذا الجهاز مباشرة داخل
+# مجلد المشروع — ليست جزءًا من المشروع إطلاقًا، ولا يجب أن تُضاف عرَضيًا
+# عبر git add -A.
+.tmp.driveupload/
+
 # IntelliJ related
 *.iml
 *.ipr
