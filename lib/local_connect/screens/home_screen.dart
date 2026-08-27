@@ -300,23 +300,35 @@ class _UpdateBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final update = appState.availableUpdate!;
-    final accent = Theme.of(context).colorScheme.primary;
-    return Container(
-      width: double.infinity,
-      color: accent.withValues(alpha: 0.1),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: Row(
-        children: [
-          Icon(Icons.system_update, color: accent),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text('يتوفر إصدار جديد (${update.versionTag})', style: TextStyle(color: accent)),
+    // لون قوي مصمت (كهرماني) بدل تلوين شفاف خفيف — بنفس أسلوب تحذيرات
+    // النظام الملحوظة فورًا، حتى لا يفوت المستخدم وجود تحديث ويبقى على
+    // إصدار قديم به أخطاء مُصلَحة أصلًا.
+    const bannerColor = Color(0xFFFFA000);
+    return Material(
+      color: bannerColor,
+      child: InkWell(
+        onTap: () => launchUrl(Uri.parse(update.downloadUrl), mode: LaunchMode.externalApplication),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              const Icon(Icons.system_update, color: Colors.white),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'يتوفر تحديث جديد (${update.versionTag}) — يحتوي على إصلاحات مهمة',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: bannerColor),
+                onPressed: () => launchUrl(Uri.parse(update.downloadUrl), mode: LaunchMode.externalApplication),
+                child: const Text('تحميل الآن'),
+              ),
+            ],
           ),
-          TextButton(
-            onPressed: () => launchUrl(Uri.parse(update.downloadUrl), mode: LaunchMode.externalApplication),
-            child: const Text('تحميل'),
-          ),
-        ],
+        ),
       ),
     );
   }

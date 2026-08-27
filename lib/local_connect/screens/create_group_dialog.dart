@@ -1,13 +1,22 @@
 import 'package:flutter/material.dart';
 
 import '../app_scope.dart';
+import '../models/conversation.dart';
 import 'chat_screen.dart';
 
 /// ينشئ مجموعة أو قناة جديدة من جهات الاتصال المحفوظة أصلًا (لا يمكن دعوة
 /// رقم لم يُضَف كجهة اتصال بعد — لا خادم مركزي يبحث عن أرقام عشوائية على
 /// الشبكة). القناة تتطلب متابعًا واحدًا على الأقل ليصل لهم البث؛ يمكن
 /// إضافة المزيد لاحقًا من شاشة معلومات القناة على أي حال.
-Future<void> showCreateGroupDialog(BuildContext context, {bool isChannel = false}) async {
+///
+/// [onCreated] اختياري: يُستدعى بالمحادثة المُنشأة حديثًا بدل الانتقال
+/// التلقائي لشاشتها — تستخدمه شاشة تفاصيل مجتمع لإدراج المجموعة الجديدة
+/// في المجتمع مباشرة (انظر AppState.addGroupToCommunity).
+Future<void> showCreateGroupDialog(
+  BuildContext context, {
+  bool isChannel = false,
+  void Function(Conversation)? onCreated,
+}) async {
   final appState = AppScope.of(context);
   final nameController = TextEditingController();
   final selected = <String>{};
@@ -87,6 +96,10 @@ Future<void> showCreateGroupDialog(BuildContext context, {bool isChannel = false
     isChannel: isChannel,
   );
 
+  if (onCreated != null) {
+    onCreated(conversation);
+    return;
+  }
   if (!context.mounted) return;
   Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(conversation: conversation)));
 }

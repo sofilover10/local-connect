@@ -5,6 +5,7 @@ import '../models/community.dart';
 import '../models/conversation.dart';
 import 'chat_screen.dart';
 import 'create_community_dialog.dart';
+import 'create_group_dialog.dart';
 
 class CommunitiesScreen extends StatelessWidget {
   const CommunitiesScreen({super.key});
@@ -73,6 +74,54 @@ class CommunityDetailScreen extends StatelessWidget {
     Navigator.pop(context);
   }
 
+  /// المجتمع بلا أي مجموعة مُدرَجة حاوية فارغة بلا مكان للدردشة إطلاقًا —
+  /// هذا هو المسار الوحيد لإضافة مكان دردشة له بعد إنشائه (الإدراج عند
+  /// الإنشاء نفسه اختياري ويقتصر على المجموعات المملوكة وقتها فقط).
+  Future<void> _showAddGroupMenu(BuildContext context, LocalConnectAppState appState) async {
+    final ownedUnlinked = appState.conversations
+        .where((c) =>
+            c.isGroup &&
+            c.groupOwnerInternalNumber == appState.identity.internalNumber &&
+            !community.linkedConversationIds.contains(c.id))
+        .toList();
+
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.group_add),
+              title: const Text('إنشاء مجموعة جديدة وإدراجها'),
+              onTap: () {
+                Navigator.pop(context);
+                showCreateGroupDialog(
+                  context,
+                  onCreated: (conversation) =>
+                      AppScope.of(context).addGroupToCommunity(community.id, conversation.id),
+                );
+              },
+            ),
+            if (ownedUnlinked.isNotEmpty) ...[
+              const Divider(height: 1),
+              for (final group in ownedUnlinked)
+                ListTile(
+                  leading: Icon(group.isChannel ? Icons.campaign : Icons.groups),
+                  title: Text(group.peerDisplayName),
+                  subtitle: const Text('إدراج مجموعة تملكها أصلًا'),
+                  onTap: () {
+                    Navigator.pop(context);
+                    appState.addGroupToCommunity(community.id, group.id);
+                  },
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final appState = AppScope.of(context);
@@ -113,14 +162,30 @@ class CommunityDetailScreen extends StatelessWidget {
                 ),
               ),
               const Divider(),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
-                child: Text('المجموعات والقنوات', style: TextStyle(fontWeight: FontWeight.bold)),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text('المجموعات والقنوات', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                    if (community.ownerInternalNumber == appState.identity.internalNumber)
+                      IconButton(
+                        icon: const Icon(Icons.add_circle_outline),
+                        tooltip: 'إضافة مجموعة',
+                        onPressed: () => _showAddGroupMenu(context, appState),
+                      ),
+                  ],
+                ),
               ),
               if (linkedGroups.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  child: Text('لا توجد مجموعات مُدرَجة، أو لستَ عضوًا في أي منها.'),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  child: Text(
+                    community.ownerInternalNumber == appState.identity.internalNumber
+                        ? 'لا توجد مجموعات مُدرَجة بعد — اضغط + لإضافة أو إنشاء واحدة، فيصبح لها مكان للدردشة.'
+                        : 'لا توجد مجموعات مُدرَجة، أو لستَ عضوًا في أي منها.',
+                  ),
                 )
               else
                 for (final group in linkedGroups)

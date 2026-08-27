@@ -87,6 +87,52 @@ extension CommunitiesExtension on LocalConnectAppState {
     _safeNotify();
   }
 
+  /// يُدرِج مجموعة/قناة أملكها ضمن مجتمع — للمالك فقط، وإلا فلا معنى لأن
+  /// المجتمع نفسه بلا محادثة خاصة به (انظر توثيق [Community])؛ بدون هذا،
+  /// مجتمع أُنشئ بلا أي مجموعة مُدرَجة يبقى حاويةً فارغة لا مكان للدردشة
+  /// فيها إطلاقًا.
+  Future<void> addGroupToCommunity(String communityId, String conversationId) async {
+    final index = communities.indexWhere((c) => c.id == communityId);
+    if (index == -1) return;
+    final community = communities[index];
+    if (community.ownerInternalNumber != identity.internalNumber) return;
+    if (community.linkedConversationIds.contains(conversationId)) return;
+
+    community.linkedConversationIds.add(conversationId);
+    await _store.communityBox.put(communityId, _store.encode(community.toMap()));
+    _safeNotify();
+
+    for (final member in community.memberInternalNumbers) {
+      unawaited(_deliverViaAnyTransport(member, {
+        'type': 'community_group_added',
+        'id': const Uuid().v4(),
+        'communityId': communityId,
+        'conversationId': conversationId,
+        'senderInternalNumber': identity.internalNumber,
+      }));
+    }
+  }
+
+  void _handleIncomingCommunityGroupAdded(Map<String, dynamic> payload) {
+    final communityId = payload['communityId'];
+    final conversationId = payload['conversationId'];
+    if (communityId is! String ||
+        !_isSafeIdentifier(communityId) ||
+        conversationId is! String ||
+        !_isSafeIdentifier(conversationId)) {
+      return;
+    }
+
+    final index = communities.indexWhere((c) => c.id == communityId);
+    if (index == -1) return;
+    final community = communities[index];
+    if (community.linkedConversationIds.contains(conversationId)) return;
+
+    community.linkedConversationIds.add(conversationId);
+    unawaited(_store.communityBox.put(communityId, _store.encode(community.toMap())));
+    _safeNotify();
+  }
+
   /// يغادر عضو مجتمعًا بنفسه (لا صلاحيات إدارية متدرّجة بعد — أي عضو،
   /// بما فيه المالك، يقدر يغادر). لا يؤثر هذا على عضويته في أي مجموعة
   /// منضوية داخل المجتمع؛ تلك مستقلة تمامًا.

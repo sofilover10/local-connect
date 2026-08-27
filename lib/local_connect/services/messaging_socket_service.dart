@@ -122,6 +122,7 @@ class MessagingSocketService {
       'group_member_update',
       'community_invite',
       'community_member_update',
+      'community_group_added',
       'call_offer',
       'call_answer',
       'call_ice_candidate',

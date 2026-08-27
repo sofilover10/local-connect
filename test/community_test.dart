@@ -95,4 +95,48 @@ void main() {
       reason: 'يجب أن يعرف B أن C غادر أيضًا (وليس فقط A)',
     );
   }, timeout: const Timeout(Duration(seconds: 40)));
+
+  test('إضافة مجموعة لمجتمع بعد إنشائه تصل فعليًا لبقية الأعضاء', () async {
+    const testPort = 46404;
+    final deviceA = LocalConnectAppState(instanceId: 'community_add_group_a', messagingPort: testPort);
+    final deviceB = LocalConnectAppState(instanceId: 'community_add_group_b', messagingPort: testPort);
+    addTearDown(() {
+      deviceA.dispose();
+      deviceB.dispose();
+    });
+
+    await deviceB.init();
+    await deviceA.init();
+
+    await _waitUntil(() => deviceA.discovery.peerByInternalNumber(deviceB.identity.internalNumber) != null);
+    await deviceA.addContactFromPeer(deviceA.discovery.peerByInternalNumber(deviceB.identity.internalNumber)!);
+
+    // مجتمع بلا أي مجموعة مُدرَجة عند الإنشاء — يمثّل الحالة التي أبلغ عنها
+    // المستخدم: لا مكان للدردشة فيه إطلاقًا.
+    final community = await deviceA.createCommunity(
+      name: 'مجتمع بلا مجموعات مبدئيًا',
+      memberInternalNumbers: [deviceB.identity.internalNumber],
+    );
+    expect(
+      await _waitUntil(() => deviceB.communities.any((c) => c.id == community.id)),
+      isTrue,
+    );
+    expect(deviceB.communities.firstWhere((c) => c.id == community.id).linkedConversationIds, isEmpty);
+
+    // A (المالك) ينشئ مجموعة لاحقًا ويُدرِجها في المجتمع.
+    final group = await deviceA.createGroup(
+      name: 'مجموعة أُضيفت لاحقًا',
+      memberInternalNumbers: [deviceB.identity.internalNumber],
+    );
+    await deviceA.addGroupToCommunity(community.id, group.id);
+
+    expect(
+      await _waitUntil(() {
+        final onB = deviceB.communities.where((c) => c.id == community.id);
+        return onB.isNotEmpty && onB.first.linkedConversationIds.contains(group.id);
+      }),
+      isTrue,
+      reason: 'يجب أن تصل المجموعة الجديدة المُدرَجة لـB فعليًا',
+    );
+  }, timeout: const Timeout(Duration(seconds: 30)));
 }

@@ -42,6 +42,10 @@ extension IncomingWireExtension on LocalConnectAppState {
         _handleIncomingCommunityMemberUpdate(payload);
         return;
       }
+      if (type == 'community_group_added') {
+        _handleIncomingCommunityGroupAdded(payload);
+        return;
+      }
 
       // معرّف المحادثة: لرسائل مجموعة، المُرسِل يحدّده صراحة (groupId) لأنه
       // لا يمكن اشتقاقه محليًا كحال المحادثات الثنائية (لا يوجد "طرفان" فقط

@@ -9,8 +9,8 @@ class Community {
     required this.ownerInternalNumber,
     List<String>? memberInternalNumbers,
     List<String>? linkedConversationIds,
-  })  : memberInternalNumbers = memberInternalNumbers ?? [],
-        linkedConversationIds = linkedConversationIds ?? [];
+  })  : memberInternalNumbers = List<String>.from(memberInternalNumbers ?? const []),
+        linkedConversationIds = List<String>.from(linkedConversationIds ?? const []);
 
   final String id;
   String name;

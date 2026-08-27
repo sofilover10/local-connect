@@ -72,6 +72,19 @@ extension DiagnosticsExtension on LocalConnectAppState {
           : (relay.lastError ?? 'غير متصل حاليًا (طبيعي بلا إنترنت؛ يعيد المحاولة تلقائيًا)'),
     ));
 
+    // بدون هذه الصلاحية (أندرويد 13+)، كل الإشعارات (رسائل، مكالمات واردة،
+    // خدمة الخلفية) تُبنى بصمت تام دون أي خطأ ظاهر — هذا الفحص هو الطريقة
+    // الوحيدة لمعرفة أن هذا هو سبب عدم ظهور أي إشعار إطلاقًا.
+    final notificationStatus = await Permission.notification.status;
+    checks.add(DiagnosticCheck(
+      label: 'صلاحية الإشعارات',
+      ok: notificationStatus.isGranted,
+      detail: notificationStatus.isGranted
+          ? 'مُمنوحة — الإشعارات تعمل بشكل طبيعي'
+          : 'غير مُمنوحة — لن تظهر أي إشعارات (رسائل، مكالمات واردة) إطلاقًا. '
+              'امنحها من إعدادات النظام: التطبيقات ← LocalConnect ← الإشعارات.',
+    ));
+
     final pendingCount = _messagesByConversation.values.expand((m) => m).where(
           (m) => m.outgoing && (m.status == MessageStatus.queued || m.status == MessageStatus.failed),
         ).length;
