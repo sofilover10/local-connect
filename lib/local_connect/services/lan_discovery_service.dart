@@ -15,12 +15,23 @@ class LanDiscoveryService {
   LanDiscoveryService({
     this.udpPort = 45601,
     this.broadcastInterval = const Duration(seconds: 2, milliseconds: 500),
+    this.backgroundBroadcastInterval = const Duration(seconds: 20),
     this.staleTimeout = const Duration(seconds: 8),
   });
 
   final int udpPort;
   final Duration broadcastInterval;
+
+  /// بث بطاقة الحضور كل [broadcastInterval] (٢٫٥ ثانية) بلا توقف طوال بقاء
+  /// عملية التطبيق — بما أن خدمة المقدّمة الثابتة تُبقي العملية حيّة حتى
+  /// والشاشة مطفأة — يستنزف البطارية ملحوظًا. عند انتقال التطبيق للخلفية
+  /// (راجع [setBackgroundMode]) يُبطَّأ البث لهذا المعدَّل بدلًا، مقابل
+  /// تأخير بسيط في ظهور الجهاز لدى الآخرين؛ الرسائل والمكالمات المباشرة
+  /// عبر TCP لا تتأثر إطلاقًا، فقط قائمة "الأجهزة الظاهرة" تتحدّث أبطأ.
+  final Duration backgroundBroadcastInterval;
   final Duration staleTimeout;
+
+  bool _isBackground = false;
 
   RawDatagramSocket? _socket;
   Timer? _broadcastTimer;
@@ -78,13 +89,31 @@ class LanDiscoveryService {
       },
     );
 
-    _broadcastTimer = Timer.periodic(broadcastInterval, (_) {
-      unawaited(_broadcastPresence(identity: identity, tcpPort: tcpPort));
-    });
+    _restartBroadcastTimer();
     // بث فوري أول مرة بدل انتظار أول دورة.
     await _broadcastPresence(identity: identity, tcpPort: tcpPort);
 
     _pruneTimer = Timer.periodic(const Duration(seconds: 2), (_) => _pruneStale());
+  }
+
+  void _restartBroadcastTimer() {
+    final identity = _identity;
+    final tcpPort = _tcpPort;
+    if (identity == null || tcpPort == null) return;
+    _broadcastTimer?.cancel();
+    final interval = _isBackground ? backgroundBroadcastInterval : broadcastInterval;
+    _broadcastTimer = Timer.periodic(interval, (_) {
+      unawaited(_broadcastPresence(identity: identity, tcpPort: tcpPort));
+    });
+  }
+
+  /// يُستدعى من مراقب دورة حياة التطبيق عند دخول الخلفية (الشاشة مطفأة أو
+  /// تطبيق آخر بالمقدمة) أو العودة منها — راجع توثيق
+  /// [backgroundBroadcastInterval] أعلاه لسبب هذا التبديل.
+  void setBackgroundMode(bool background) {
+    if (_isBackground == background) return;
+    _isBackground = background;
+    if (_broadcastTimer != null) _restartBroadcastTimer();
   }
 
   /// يوقف الاكتشاف الحالي (إن كان يعمل) ويعيد محاولة تفعيله من جديد.

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState, WidgetsBinding, WidgetsBindingObserver;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -48,7 +49,7 @@ part 'app_state_diagnostics.dart';
 /// ظهر الطرف الآخر (اكتشاف جديد) أو دوريًا كل بضع ثوانٍ — هذا هو أسلوب
 /// "التخزين والإعادة" (store-and-forward) الذي يجعل التطبيق يعمل أوفلاين
 /// على الشبكة المحلية دون أي خادم مركزي.
-class LocalConnectAppState extends ChangeNotifier {
+class LocalConnectAppState extends ChangeNotifier with WidgetsBindingObserver {
   LocalConnectAppState({String instanceId = 'default', int messagingPort = 45602})
       : _store = LocalStoreService(instanceId: instanceId),
         socket = MessagingSocketService(preferredPort: messagingPort);
@@ -225,6 +226,18 @@ class LocalConnectAppState extends ChangeNotifier {
     // أي إصدار جديد يصدر بعدها لن يُكتشَف إطلاقًا ما لم يُغلَق التطبيق
     // إغلاقًا كاملًا (تصفيته من الخلفية فعليًا) ويُعاد فتحه من الصفر.
     _updateCheckTimer = Timer.periodic(const Duration(hours: 6), (_) => _checkForUpdate());
+
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  /// يُبطئ بث اكتشاف الأجهزة (راجع LanDiscoveryService.backgroundBroadcastInterval)
+  /// عندما تُغلَق الشاشة أو ينتقل التطبيق للخلفية — خدمة المقدّمة الثابتة
+  /// تُبقي العملية حيّة في هذه الحالة أيضًا (بخلاف تطبيق عادي يُعلَّق
+  /// بالكامل)، فبث كل ٢٫٥ ثانية بلا توقف طوال هذا الوقت يستنزف البطارية
+  /// ملحوظًا بلا داعٍ حقيقي (المستخدم لا ينظر للشاشة أصلًا).
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    discovery.setBackgroundMode(state != AppLifecycleState.resumed);
   }
 
   /// فحص غير حاجب لوجود إصدار أحدث على GitHub Releases. يفشل بصمت بلا
@@ -426,6 +439,7 @@ class LocalConnectAppState extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    WidgetsBinding.instance.removeObserver(this);
     _retryTimer?.cancel();
     _updateCheckTimer?.cancel();
     _peersSub?.cancel();
