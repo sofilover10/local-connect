@@ -318,13 +318,14 @@ extension MessagingExtension on LocalConnectAppState {
     String peerInternalNumber,
     Map<String, dynamic> payload,
   ) async {
-    final timeout = _deliveryTimeoutFor(payload);
+    final effectivePayload = await _prepareOutgoingPayload(peerInternalNumber, payload);
+    final timeout = _deliveryTimeoutFor(effectivePayload);
     final peer = discovery.peerByInternalNumber(peerInternalNumber);
     if (peer != null) {
       final delivered = await socket.sendDirect(
         address: peer.address,
         port: peer.tcpPort,
-        payload: payload,
+        payload: effectivePayload,
         timeout: timeout,
       );
       if (delivered) return MessageStatus.delivered;
@@ -340,7 +341,7 @@ extension MessagingExtension on LocalConnectAppState {
         final delivered = await socket.sendDirect(
           address: parsed,
           port: socket.preferredPort,
-          payload: payload,
+          payload: effectivePayload,
           timeout: timeout,
         );
         if (delivered) return MessageStatus.delivered;
@@ -349,15 +350,58 @@ extension MessagingExtension on LocalConnectAppState {
 
     final bluetoothAddress = contact?.bluetoothAddress;
     if (bluetoothAddress != null) {
-      final delivered =
-          await bluetoothMessaging.sendDirect(address: bluetoothAddress, payload: payload, timeout: timeout);
+      final delivered = await bluetoothMessaging.sendDirect(
+          address: bluetoothAddress, payload: effectivePayload, timeout: timeout);
       if (delivered) return MessageStatus.delivered;
     }
 
-    final sentViaRelay = await relay.send(to: peerInternalNumber, payload: payload);
+    final sentViaRelay = await relay.send(to: peerInternalNumber, payload: effectivePayload);
     if (sentViaRelay) return MessageStatus.sent;
 
     return MessageStatus.failed;
+  }
+
+  /// نقطة التشفير المركزية الوحيدة لكل حمولة صادرة، بصرف النظر عن وسيلة
+  /// النقل التي ستُستخدَم لاحقًا (Wi-Fi مكتشَف، IP يدوي، بلوتوث، أو المُرحِّل
+  /// المركزي) — تُطبَّق هنا مرة واحدة فقط بدل تكرارها في كل مسار. راجع
+  /// توثيق [E2eeService] لتفاصيل تبادل المفاتيح وحدود هذا التصميم.
+  ///
+  /// نُرفِق مفتاحنا العام دائمًا (senderPublicKey) حتى في الحمولات غير
+  /// المشفَّرة — هذا ما يُمكِّن الطرف الآخر من تشفير أول رسالة يرسلها لنا
+  /// حتى لو لم يصله بعد أي بطاقة حضور منّا (مثلًا وصلته أول رسالة منّا عبر
+  /// بلوتوث أو المُرحِّل، لا اكتشاف الشبكة المحلية). حقول 'text'/'data' فقط
+  /// هي ما تُشفَّر؛ الحقول الوصفية الأخرى (النوع، المعرّف، عناوين
+  /// الاستطلاعات/الفعاليات...) تبقى ظاهرة لأنها ضرورية للتوجيه والمعالجة.
+  Future<Map<String, dynamic>> _prepareOutgoingPayload(
+    String peerInternalNumber,
+    Map<String, dynamic> payload,
+  ) async {
+    final result = Map<String, dynamic>.of(payload);
+    result['senderPublicKey'] = e2ee.publicKeyBase64;
+
+    if (!e2ee.hasKeyFor(peerInternalNumber)) return result;
+
+    final text = result.remove('text');
+    if (text is String) {
+      final encrypted = await e2ee.encryptToBase64(peerInternalNumber, text);
+      if (encrypted != null) {
+        result['textEnc'] = encrypted;
+      } else {
+        result['text'] = text;
+      }
+    }
+
+    final data = result.remove('data');
+    if (data is String) {
+      final encrypted = await e2ee.encryptToBase64(peerInternalNumber, data);
+      if (encrypted != null) {
+        result['dataEnc'] = encrypted;
+      } else {
+        result['data'] = data;
+      }
+    }
+
+    return result;
   }
 
   /// المهلة الافتراضية (3 ثوانٍ في MessagingSocketService.sendDirect) كافية
@@ -369,7 +413,7 @@ extension MessagingExtension on LocalConnectAppState {
   /// نفترض معدل نقل متحفظ 2 ميغابايت/ثانية (يشمل بلوتوث الأبطأ) زائد 5
   /// ثوانٍ ثابتة للاتصال والمعالجة.
   Duration _deliveryTimeoutFor(Map<String, dynamic> payload) {
-    final data = payload['data'];
+    final data = payload['data'] ?? payload['dataEnc'];
     if (data is! String || data.length < 200 * 1024) return const Duration(seconds: 3);
     final estimatedSeconds = 5 + (data.length / (2 * 1024 * 1024)).ceil();
     return Duration(seconds: estimatedSeconds.clamp(3, 180));

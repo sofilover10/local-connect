@@ -21,6 +21,7 @@ import 'bluetooth_messaging_service.dart';
 import 'bluetooth_transport_service.dart';
 import 'call_service.dart';
 import 'device_identity_service.dart';
+import 'e2ee_service.dart';
 import 'group_call_service.dart';
 import 'lan_discovery_service.dart';
 import 'local_store_service.dart';
@@ -58,6 +59,11 @@ class LocalConnectAppState extends ChangeNotifier with WidgetsBindingObserver {
   late final DeviceIdentityService _identityService = DeviceIdentityService(_store);
   final LanDiscoveryService discovery = LanDiscoveryService();
   final MessagingSocketService socket;
+
+  /// تشفير من طرف لطرف لمحتوى الرسائل (نص/مرفقات) — راجع توثيق [E2eeService]
+  /// لتفاصيل التصميم وحدوده. `late final` بدل تهيئة مباشرة لأنه يحتاج
+  /// [_store] المُهيَّأ في قائمة تهيئة المُنشئ أولًا.
+  late final E2eeService e2ee = E2eeService(_store);
   final PhoneContactsService _phoneContactsService = PhoneContactsService();
   final MessageNotificationService _messageNotifications = MessageNotificationService();
 
@@ -181,6 +187,7 @@ class LocalConnectAppState extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> init() async {
     await _store.init();
     identity = await _identityService.loadOrCreate(defaultName: 'مستخدم جديد');
+    await e2ee.init();
 
     await _loadContacts();
     await _loadConversations();

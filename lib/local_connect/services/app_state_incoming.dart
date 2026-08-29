@@ -6,7 +6,7 @@ extension IncomingWireExtension on LocalConnectAppState {
   /// أي جهاز على الشبكة المحلية يمكنه فتح اتصال TCP وإرسال JSON تعسفي، لذا
   /// يجب عدم الوثوق ببنية الحمولة الواردة؛ حزمة مشوَّهة يجب أن تُهمَل
   /// وتُسجَّل في سجل الأخطاء بدل أن تُسقِط معالجة الرسائل بالكامل.
-  void _handleIncomingWire(Map<String, dynamic> payload) {
+  Future<void> _handleIncomingWire(Map<String, dynamic> payload) async {
     try {
       final senderInternalNumber = payload['senderInternalNumber'];
       if (senderInternalNumber is! String || !_isSafeIdentifier(senderInternalNumber)) {
@@ -23,6 +23,24 @@ extension IncomingWireExtension on LocalConnectAppState {
       // معالجته — رسائل نصية، تعديل/حذف، وإشارات مكالمات (call_offer...)
       // كلها تمر من هنا، فحظر شخص يمنعه من مراسلتك **و** الاتصال بك معًا.
       if (blockedInternalNumbers.contains(senderInternalNumber)) return;
+
+      // تسجيل مفتاح المُرسِل العام أولًا (إن وُجد) — يُمكِّن فكّ تشفير
+      // 'textEnc'/'dataEnc' أدناه فورًا حتى في أول رسالة نتلقّاها منه أصلًا
+      // (المفتاح يصل ضمن نفس الحمولة). راجع توثيق [E2eeService].
+      final senderPublicKey = payload['senderPublicKey'];
+      if (senderPublicKey is String) {
+        e2ee.registerPeerPublicKey(senderInternalNumber, senderPublicKey);
+      }
+      final textEnc = payload['textEnc'];
+      if (textEnc is String) {
+        final decrypted = await e2ee.decryptFromBase64(senderInternalNumber, textEnc);
+        if (decrypted != null) payload['text'] = decrypted;
+      }
+      final dataEnc = payload['dataEnc'];
+      if (dataEnc is String) {
+        final decrypted = await e2ee.decryptFromBase64(senderInternalNumber, dataEnc);
+        if (decrypted != null) payload['data'] = decrypted;
+      }
 
       final type = payload['type'];
 

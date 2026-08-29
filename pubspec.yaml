@@ -1,7 +1,7 @@
 name: local_connect
 description: "تطبيق مراسلة يعمل أوفلاين على الشبكة المحلية وأونلاين عبر الإنترنت، بأرقام داخلية أو أرقام هاتف."
 publish_to: 'none'
-version: 0.19.4+42
+version: 0.20.0+43
 
 environment:
   sdk: ^3.12.2
@@ -26,6 +26,7 @@ dependencies:
   url_launcher: ^6.3.1
   web_socket_channel: ^3.0.2
   flutter_webrtc: ^1.6.0
+  cryptography: ^2.7.0
 
 dev_dependencies:
   flutter_test:
