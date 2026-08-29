@@ -28,6 +28,11 @@ class LocalConnectApplication : Application() {
     override fun onCreate() {
         super.onCreate()
 
+        // يجب أن يُثبَّت قبل أي شيء آخر — أول لحظة ممكنة من عمر العملية —
+        // حتى يلتقط أعطالًا قد تحدث أثناء تهيئة محرّك Flutter نفسه أو أي من
+        // المعالِجات أدناه، لا فقط بعد اكتمال الإقلاع.
+        CrashReporter.install(this)
+
         val engine = FlutterEngine(this)
         // تسجيل الإضافات (path_provider، permission_handler، flutter_webrtc...)
         // يجب أن يسبق تشغيل main() في Dart — وإلا فقد يستدعي كود Dart قناة
@@ -87,6 +92,17 @@ class LocalConnectApplication : Application() {
                 result.success(null)
             } else {
                 result.notImplemented()
+            }
+        }
+
+        MethodChannel(messenger, "local_connect/crash_log").setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getPendingCrash" -> result.success(CrashReporter.readPendingCrash(applicationContext))
+                "clearPendingCrash" -> {
+                    CrashReporter.clearPendingCrash(applicationContext)
+                    result.success(null)
+                }
+                else -> result.notImplemented()
             }
         }
     }

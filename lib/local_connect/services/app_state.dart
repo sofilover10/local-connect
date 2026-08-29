@@ -22,6 +22,7 @@ import 'bluetooth_transport_service.dart';
 import 'call_service.dart';
 import 'device_identity_service.dart';
 import 'e2ee_service.dart';
+import 'native_crash_service.dart';
 import 'group_call_service.dart';
 import 'lan_discovery_service.dart';
 import 'local_store_service.dart';
@@ -65,6 +66,7 @@ class LocalConnectAppState extends ChangeNotifier with WidgetsBindingObserver {
   /// [_store] المُهيَّأ في قائمة تهيئة المُنشئ أولًا.
   late final E2eeService e2ee = E2eeService(_store);
   final PhoneContactsService _phoneContactsService = PhoneContactsService();
+  final NativeCrashService _nativeCrash = NativeCrashService();
   final MessageNotificationService _messageNotifications = MessageNotificationService();
 
   /// معرّف المحادثة المفتوحة حاليًا على الشاشة (إن وُجدت) — تُضبَط من
@@ -188,6 +190,7 @@ class LocalConnectAppState extends ChangeNotifier with WidgetsBindingObserver {
     await _store.init();
     identity = await _identityService.loadOrCreate(defaultName: 'مستخدم جديد');
     await e2ee.init();
+    await _reportPendingNativeCrash();
 
     await _loadContacts();
     await _loadConversations();
@@ -235,6 +238,17 @@ class LocalConnectAppState extends ChangeNotifier with WidgetsBindingObserver {
     _updateCheckTimer = Timer.periodic(const Duration(hours: 6), (_) => _checkForUpdate());
 
     WidgetsBinding.instance.addObserver(this);
+  }
+
+  /// يقرأ أي عطل أصلي (خارج محرّك Dart تمامًا — WebRTC، البلوتوث/Wi-Fi
+  /// Direct المكتوبَين يدويًا في الكود الأصلي) حدث في الجلسة السابقة وأنهى
+  /// العملية، ويُسجِّله في [errorLog] العادي حتى يظهر في شاشة "فحص
+  /// الأخطاء" بدل أن يبقى بلا أي أثر — راجع توثيق CrashReporter.kt.
+  Future<void> _reportPendingNativeCrash() async {
+    final crash = await _nativeCrash.readPendingCrash();
+    if (crash == null || crash.isEmpty) return;
+    recordError('عطل أصلي سابق (native crash)', crash.trim());
+    await _nativeCrash.clearPendingCrash();
   }
 
   /// يُبطئ بث اكتشاف الأجهزة (راجع LanDiscoveryService.backgroundBroadcastInterval)
