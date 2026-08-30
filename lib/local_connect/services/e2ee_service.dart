@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:cryptography/cryptography.dart';
 
+import '../utils/text_sanitize.dart';
 import 'local_store_service.dart';
 
 /// تشفير الرسائل من طرف لطرف (End-to-End) عبر تبادل مفاتيح X25519 وتشفير
@@ -116,11 +117,25 @@ class E2eeService {
   /// يشفّر [plainText] لطرف [internalNumber] — يعيد null إن لم يكن مفتاحه
   /// معروفًا بعد؛ على المُستدعي حينها إرسال النص كما هو (بلا تشفير) كحالة
   /// أولى فقط قبل تبادل المفاتيح.
+  ///
+  /// [plainText] قد يحمل محارف surrogate مفردة معطوبة وصلت أصلًا من مصدر
+  /// خارجي غير مُنقّى (مثلًا رسالة قديمة عالقة في قائمة الانتظار قبل إضافة
+  /// [sanitizeExternalText] في نقاط أخرى) — utf8.encode يرمي استثناء "string
+  /// is not well-formed UTF-16" على مثل هذا النص، وبما أن هذه الدالة تُستدعى
+  /// من كل محاولة إعادة إرسال لرسالة عالقة (كل 5 ثوانٍ عبر المؤقّت الدوري،
+  /// وأيضًا عند كل تغيّر في قائمة الأجهزة الظاهرة)، كان استثناء غير مُلتقَط
+  /// هنا يتكرر بلا توقف في سجل الأخطاء. التنقية + try/catch هنا يمنعان ذلك
+  /// نهائيًا بصرف النظر عن مصدر النص المعطوب الأصلي.
   Future<String?> encryptToBase64(String internalNumber, String plainText) async {
     if (!hasKeyFor(internalNumber)) return null;
-    final key = await _sharedKeyFor(internalNumber);
-    final secretBox = await _cipher.encrypt(utf8.encode(plainText), secretKey: key);
-    return base64Encode(secretBox.concatenation());
+    try {
+      final key = await _sharedKeyFor(internalNumber);
+      final secretBox =
+          await _cipher.encrypt(utf8.encode(sanitizeExternalText(plainText)), secretKey: key);
+      return base64Encode(secretBox.concatenation());
+    } catch (_) {
+      return null;
+    }
   }
 
   /// يفكّ تشفير حمولة من طرف [internalNumber] — يعيد null إن كان المفتاح

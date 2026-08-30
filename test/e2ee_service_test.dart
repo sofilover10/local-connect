@@ -81,4 +81,26 @@ void main() {
     final result = await bob.decryptFromBase64('impersonator', cipherText!);
     expect(result, isNull);
   });
+
+  test('تشفير نص يحمل محرف surrogate مفردًا معطوبًا لا يرمي استثناءً', () async {
+    final storeA = await _newStore('e2ee_a3');
+    final storeB = await _newStore('e2ee_b3');
+    final alice = E2eeService(storeA);
+    final bob = E2eeService(storeB);
+    await alice.init();
+    await bob.init();
+    alice.registerPeerPublicKey('bob', bob.publicKeyBase64);
+    bob.registerPeerPublicKey('alice', alice.publicKeyBase64);
+
+    // نص فيه high surrogate مفرد بلا low surrogate تالٍ له — بالضبط النوع
+    // الذي كان يُسقِط utf8.encode باستثناء "string is not well-formed
+    // UTF-16" قبل هذا الإصلاح.
+    final corrupted = String.fromCharCodes([0x0645, 0xD83D, 0x0646]);
+
+    final cipherText = await alice.encryptToBase64('bob', corrupted);
+    expect(cipherText, isNotNull, reason: 'يجب أن ينجح التشفير بعد تنقية النص بدل الفشل');
+
+    final decrypted = await bob.decryptFromBase64('alice', cipherText!);
+    expect(decrypted, 'من', reason: 'المحرف المعطوب يُسقَط، وما تبقى من نص سليم يصل كما هو');
+  });
 }

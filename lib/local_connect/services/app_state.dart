@@ -17,6 +17,7 @@ import '../models/diagnostic_check.dart';
 import '../models/message.dart';
 import '../models/peer_info.dart';
 import '../models/status_post.dart';
+import '../utils/text_sanitize.dart';
 import 'bluetooth_messaging_service.dart';
 import 'bluetooth_transport_service.dart';
 import 'call_service.dart';

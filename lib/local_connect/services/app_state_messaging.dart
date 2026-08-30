@@ -379,6 +379,14 @@ extension MessagingExtension on LocalConnectAppState {
     final result = Map<String, dynamic>.of(payload);
     result['senderPublicKey'] = e2ee.publicKeyBase64;
 
+    // ينُقّى 'text' هنا دومًا (حتى لو لم يُعرَف مفتاح الطرف بعد ولن يُشفَّر
+    // فعليًا) — نص معطوب (محرف surrogate مفرد، من رسالة قديمة عالقة قبل
+    // إضافة التنقية في نقاط أخرى) يُسقِط لاحقًا jsonEncode/Socket.write عند
+    // محاولة إرساله خامًا كما هو، بنفس خطأ "string is not well-formed
+    // UTF-16" الذي كان يظهر من أسماء أجهزة خارجية معطوبة.
+    final rawText = result['text'];
+    if (rawText is String) result['text'] = sanitizeExternalText(rawText);
+
     if (!e2ee.hasKeyFor(peerInternalNumber)) return result;
 
     final text = result.remove('text');
