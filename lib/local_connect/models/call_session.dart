@@ -23,7 +23,10 @@ class CallSession {
   final String peerInternalNumber;
   final String peerDisplayName;
   final CallDirection direction;
-  final CallMediaType mediaType;
+
+  /// قابل للتغيير: مكالمة صوتية جارية قد تتحول لفيديو أثناء الاتصال (راجع
+  /// CallService.requestVideoUpgrade) دون إنهائها وبدء مكالمة جديدة.
+  CallMediaType mediaType;
   final DateTime startedAt;
 
   CallState state = CallState.ringing;
@@ -32,6 +35,14 @@ class CallSession {
   /// سبب الانتهاء لعرضه للمستخدم بعد إغلاق المكالمة مباشرة (رُفضت، انتهت
   /// بلا رد، فشل الاتصال...). null إن انتهت بشكل طبيعي بإنهاء أحد الطرفين.
   String? endReason;
+
+  /// true لدى الطرف الذي طلب التحويل لفيديو، بانتظار رد الطرف الآخر —
+  /// يُستخدَم لعرض "بانتظار الموافقة..." وتعطيل زر الفيديو حتى يصل الرد.
+  bool pendingOutgoingVideoUpgrade = false;
+
+  /// true لدى الطرف الذي وصله طلب تحويل لفيديو، بانتظار رده هو —
+  /// يُستخدَم لعرض شاشة/بانر "فلان يطلب التحويل لفيديو" بزرَي قبول/رفض.
+  bool pendingIncomingVideoUpgrade = false;
 
   Duration get elapsed =>
       connectedAt == null ? Duration.zero : DateTime.now().difference(connectedAt!);

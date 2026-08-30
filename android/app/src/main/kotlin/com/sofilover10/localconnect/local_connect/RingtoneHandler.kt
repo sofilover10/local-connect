@@ -51,7 +51,9 @@ class RingtoneHandler(private val context: Context) : MethodChannel.MethodCallHa
             }
             "showIncomingCallNotification" -> {
                 val callerName = call.argument<String>("callerName") ?: "مكالمة واردة"
-                showIncomingCallNotification(callerName)
+                val callerNumber = call.argument<String>("callerNumber") ?: ""
+                val isVideo = call.argument<Boolean>("isVideo") ?: false
+                showIncomingCallNotification(callerName, callerNumber, isVideo)
                 result.success(null)
             }
             "cancelIncomingCallNotification" -> {
@@ -61,6 +63,11 @@ class RingtoneHandler(private val context: Context) : MethodChannel.MethodCallHa
             "ensureFullScreenIntentPermission" -> {
                 ensureFullScreenIntentPermission()
                 result.success(null)
+            }
+            "hasFullScreenIntentPermission" -> {
+                val granted = Build.VERSION.SDK_INT < 34 ||
+                    NotificationManagerCompat.from(context).canUseFullScreenIntent()
+                result.success(granted)
             }
             else -> result.notImplemented()
         }
@@ -77,7 +84,7 @@ class RingtoneHandler(private val context: Context) : MethodChannel.MethodCallHa
     /// Google)، فيُخفِّض النظام الإشعار إلى إشعار عادي بلا فتح تلقائي لشاشة
     /// المكالمة — عندها الأزرار هنا هي الطريقة الوحيدة للرد أو الرفض دون
     /// فتح التطبيق يدويًا والانتظار حتى يُحمَّل.
-    private fun showIncomingCallNotification(callerName: String) {
+    private fun showIncomingCallNotification(callerName: String, callerNumber: String, isVideo: Boolean) {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -87,6 +94,9 @@ class RingtoneHandler(private val context: Context) : MethodChannel.MethodCallHa
             )
             manager.createNotificationChannel(channel)
         }
+
+        val callTypeLabel = if (isVideo) "مكالمة فيديو واردة" else "مكالمة صوتية واردة"
+        val contentText = if (callerNumber.isNotEmpty()) "$callerName ($callerNumber)" else callerName
 
         val fullScreenIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -113,8 +123,8 @@ class RingtoneHandler(private val context: Context) : MethodChannel.MethodCallHa
         )
 
         val notification = NotificationCompat.Builder(context, CALL_CHANNEL_ID)
-            .setContentTitle("مكالمة واردة")
-            .setContentText(callerName)
+            .setContentTitle(callTypeLabel)
+            .setContentText(contentText)
             .setSmallIcon(android.R.drawable.sym_call_incoming)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_CALL)

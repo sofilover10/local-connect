@@ -270,7 +270,11 @@ class GroupCallService extends ChangeNotifier {
     _startRingTimeout();
     unawaited(_ensureRenderers());
     unawaited(_sound.playRingtone());
-    unawaited(_sound.showIncomingCallNotification('مكالمة جماعية: $groupName'));
+    unawaited(_sound.showIncomingCallNotification(
+      callerName: 'مكالمة جماعية: $groupName',
+      callerNumber: groupId,
+      isVideo: mediaType == CallMediaType.video,
+    ));
     _safeNotify();
   }
 

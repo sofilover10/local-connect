@@ -107,6 +107,7 @@ class LocalConnectAppState extends ChangeNotifier with WidgetsBindingObserver {
     localInternalNumber: () => identity.internalNumber,
     localDisplayName: () => identity.displayName,
     contactDisplayNameFor: _contactDisplayNameFor,
+    onMissedCall: _recordMissedCall,
   );
 
   /// مكالمات صوتية جماعية (mesh) — نفس فكرة [callService] لكن لعدة أطراف؛
@@ -460,6 +461,46 @@ class LocalConnectAppState extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _persistMessage(ChatMessage message) async {
     final box = await _store.messagesBoxFor(message.conversationId);
     await box.put(message.id, _store.encode(message.toMap()));
+  }
+
+  /// يُستدعى من CallService عند انتهاء مكالمة واردة دون أن يُرَدّ عليها —
+  /// يسجّلها محليًا كرسالة من النوع missedCall داخل المحادثة الثنائية مع
+  /// المتصل (بلا أي إرسال عبر الشبكة — سجل محلي بحت)، ويُظهِر إشعارًا إن لم
+  /// تكن تلك المحادثة مفتوحة حاليًا على الشاشة.
+  Future<void> _recordMissedCall(
+    String peerInternalNumber,
+    String peerDisplayName,
+    CallMediaType mediaType,
+  ) async {
+    final conversation =
+        await _ensureConversation(internalNumber: peerInternalNumber, displayName: peerDisplayName);
+    final isVideo = mediaType == CallMediaType.video;
+    final preview = isVideo ? '📹 مكالمة فيديو فائتة' : '📞 مكالمة صوتية فائتة';
+
+    final message = ChatMessage(
+      id: const Uuid().v4(),
+      conversationId: conversation.id,
+      senderInternalNumber: peerInternalNumber,
+      text: preview,
+      sentAt: DateTime.now(),
+      status: MessageStatus.delivered,
+      outgoing: false,
+      kind: MessageKind.missedCall,
+      missedCallIsVideo: isVideo,
+    );
+
+    _messagesByConversation.putIfAbsent(conversation.id, () => []).add(message);
+    await _persistMessage(message);
+    _updateConversationPreview(conversation.id, message, previewOverride: preview);
+
+    if (conversation.id != _activeConversationId) {
+      unawaited(_messageNotifications.showMessageNotification(
+        conversationId: conversation.id,
+        senderName: peerDisplayName,
+        preview: preview,
+      ));
+    }
+    _safeNotify();
   }
 
   void _updateConversationPreview(

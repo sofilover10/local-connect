@@ -1,6 +1,6 @@
 enum MessageStatus { queued, sent, delivered, failed }
 
-enum MessageKind { text, file, voice, poll, event }
+enum MessageKind { text, file, voice, poll, event, missedCall }
 
 /// حالة الرد على دعوة فعالية — مفتاح [ChatMessage.eventRsvps].
 enum EventRsvpStatus { going, maybe, declined }
@@ -27,6 +27,7 @@ class ChatMessage {
     this.eventDateTime,
     this.eventLocation,
     Map<String, String>? eventRsvps,
+    this.missedCallIsVideo,
   })  : pollVotes = pollVotes ??
             (pollOptions == null
                 ? null
@@ -94,6 +95,11 @@ class ChatMessage {
   /// (يُستبدَل تلقائيًا عند تغيير رده)؛ راجع AppState.respondToEvent.
   Map<String, String>? eventRsvps;
 
+  /// true لمكالمة فيديو فائتة، false لصوتية — فقط لرسائل النوع missedCall
+  /// (سجل محلي بحت، لا يُرسَل عبر الشبكة إطلاقًا — راجع CallSession
+  /// و AppState.callService's onMissedCall).
+  final bool? missedCallIsVideo;
+
   Map<String, dynamic> toMap() => {
         'id': id,
         'conversationId': conversationId,
@@ -115,6 +121,7 @@ class ChatMessage {
         'eventDateTime': eventDateTime?.toIso8601String(),
         'eventLocation': eventLocation,
         'eventRsvps': eventRsvps,
+        'missedCallIsVideo': missedCallIsVideo,
       };
 
   factory ChatMessage.fromMap(Map<String, dynamic> map) => ChatMessage(
@@ -140,6 +147,7 @@ class ChatMessage {
             map['eventDateTime'] == null ? null : DateTime.parse(map['eventDateTime'] as String),
         eventLocation: map['eventLocation'] as String?,
         eventRsvps: (map['eventRsvps'] as Map<String, dynamic>?)?.cast<String, String>(),
+        missedCallIsVideo: map['missedCallIsVideo'] as bool?,
       );
 
   /// الحمولة المُرسَلة فعليًا عبر مقبس TCP بين الجهازين. المرفقات تُرسَل

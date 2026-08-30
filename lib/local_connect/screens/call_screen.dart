@@ -84,10 +84,14 @@ class _CallScreenState extends State<CallScreen> {
   String _statusText(CallSession call) {
     switch (call.state) {
       case CallState.ringing:
-        return call.direction == CallDirection.incoming ? 'مكالمة واردة' : 'جارٍ الاتصال...';
+        if (call.direction != CallDirection.incoming) return 'جارٍ الاتصال...';
+        // نوع المكالمة (صوتية/فيديو) مطلوب أن يظهر بوضوح على شاشة المكالمة
+        // الواردة — كان النص السابق "مكالمة واردة" فقط بلا تمييز النوع.
+        return call.mediaType == CallMediaType.video ? 'مكالمة فيديو واردة' : 'مكالمة صوتية واردة';
       case CallState.connecting:
         return 'جارٍ الاتصال...';
       case CallState.active:
+        if (call.pendingOutgoingVideoUpgrade) return 'بانتظار موافقة الطرف الآخر على الفيديو...';
         return _formatDuration(call.elapsed);
       case CallState.ended:
         return call.endReason ?? 'انتهت المكالمة';
@@ -141,6 +145,14 @@ class _CallScreenState extends State<CallScreen> {
                       call.peerDisplayName,
                       style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
                     ),
+                    const SizedBox(height: 2),
+                    // رقم المتصل الداخلي — يظهر دومًا، ومهم خصوصًا في شاشة
+                    // المكالمة الواردة حتى يعرف المستخدم مين المتصل بدقة ولو
+                    // لم يحفظه بعد كجهة اتصال.
+                    Text(
+                      call.peerInternalNumber,
+                      style: const TextStyle(color: Colors.white54, fontSize: 13),
+                    ),
                     const SizedBox(height: 6),
                     Text(
                       _statusText(call),
@@ -149,6 +161,13 @@ class _CallScreenState extends State<CallScreen> {
                   ],
                 ),
               ),
+              if (call.pendingIncomingVideoUpgrade)
+                Positioned(
+                  left: 16,
+                  right: 16,
+                  bottom: 160,
+                  child: _VideoUpgradeRequestBanner(callService: callService, call: call),
+                ),
               Positioned(
                 bottom: 40,
                 left: 0,
@@ -284,6 +303,17 @@ class _ActiveCallControls extends StatelessWidget {
                 active: false,
                 onPressed: ended ? null : callService.switchCamera,
               ),
+            ] else if (call.state == CallState.active) ...[
+              const SizedBox(width: 20),
+              // التحويل من صوت لفيديو أثناء مكالمة جارية — لا تُشغَّل كاميرا
+              // الطرف الآخر إطلاقًا قبل موافقته الصريحة (راجع
+              // CallService.requestVideoUpgrade). الزر مُعطَّل أثناء انتظار
+              // الرد لمنع طلبات متكررة.
+              _ToggleButton(
+                icon: Icons.videocam,
+                active: call.pendingOutgoingVideoUpgrade,
+                onPressed: call.pendingOutgoingVideoUpgrade ? null : callService.requestVideoUpgrade,
+              ),
             ],
           ],
         ),
@@ -295,6 +325,53 @@ class _ActiveCallControls extends StatelessWidget {
           onPressed: ended ? null : callService.endCall,
         ),
       ],
+    );
+  }
+}
+
+/// بانر طلب تحويل المكالمة لفيديو — يظهر لدى الطرف الذي وصله الطلب فقط،
+/// ويسمح له بالقبول أو الرفض؛ لا شيء يحدث للكاميرا قبل ضغطة صريحة هنا.
+class _VideoUpgradeRequestBanner extends StatelessWidget {
+  const _VideoUpgradeRequestBanner({required this.callService, required this.call});
+
+  final CallService callService;
+  final CallSession call;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.black87,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '${call.peerDisplayName} يطلب التحويل لمكالمة فيديو',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              OutlinedButton(
+                style: OutlinedButton.styleFrom(foregroundColor: Colors.white70),
+                onPressed: () => callService.respondToVideoUpgrade(false),
+                child: const Text('رفض'),
+              ),
+              const SizedBox(width: 12),
+              FilledButton(
+                onPressed: () => callService.respondToVideoUpgrade(true),
+                child: const Text('موافق'),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

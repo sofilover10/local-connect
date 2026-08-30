@@ -31,10 +31,12 @@ class CallService extends ChangeNotifier {
     required String Function() localInternalNumber,
     required String Function() localDisplayName,
     String? Function(String internalNumber)? contactDisplayNameFor,
+    void Function(String peerInternalNumber, String peerDisplayName, CallMediaType mediaType)? onMissedCall,
   })  : _sendSignal = sendSignal,
         _localInternalNumber = localInternalNumber,
         _localDisplayName = localDisplayName,
-        _contactDisplayNameFor = contactDisplayNameFor {
+        _contactDisplayNameFor = contactDisplayNameFor,
+        _onMissedCall = onMissedCall {
     // يستقبل ضغطة زر "رد"/"رفض" على إشعار المكالمة الواردة الأصلي (انظر
     // CallActionReceiver.kt على جانب أندرويد) — ضروري لأن الشاشة الكاملة
     // قد لا تُفتَح تلقائيًا (أندرويد 14+ يقيّدها)، فيبقى هذان الزرّان
@@ -52,6 +54,13 @@ class CallService extends ChangeNotifier {
   final CallSignalSender _sendSignal;
   final String Function() _localInternalNumber;
   final String Function() _localDisplayName;
+
+  /// يُستدعى عندما تنتهي مكالمة واردة دون أن يردّ عليها هذا الجهاز (انتهت
+  /// المهلة، أو أنهاها الطرف المتصل قبل أن يُرَدّ عليها) — يُميَّز صراحة عن
+  /// الرفض الصريح (rejectCall)، الذي لا يُعتبَر "مكالمة فائتة". راجع
+  /// _endCall لمكان تحديد هذا الفرق فعليًا.
+  final void Function(String peerInternalNumber, String peerDisplayName, CallMediaType mediaType)?
+      _onMissedCall;
 
   /// يبحث عن اسم جهة اتصال محفوظ محليًا لرقم داخلي معيَّن، أو null إن لم
   /// تكن محفوظة. عند وجوده، يُفضَّل على الاسم الذي يدّعيه الطرف المتصل نفسه
@@ -92,6 +101,7 @@ class CallService extends ChangeNotifier {
   bool _remoteDescriptionSet = false;
   Timer? _ringTimer;
   Timer? _clearTimer;
+  Timer? _videoUpgradeTimer;
   bool _disposed = false;
 
   final RTCVideoRenderer localRenderer = RTCVideoRenderer();
@@ -105,6 +115,9 @@ class CallService extends ChangeNotifier {
 
   /// راجع CallSoundService.ensureFullScreenIntentPermission.
   Future<void> ensureFullScreenIntentPermission() => _sound.ensureFullScreenIntentPermission();
+
+  /// راجع CallSoundService.hasFullScreenIntentPermission.
+  Future<bool> hasFullScreenIntentPermission() => _sound.hasFullScreenIntentPermission();
 
   void _safeNotify() {
     if (!_disposed) notifyListeners();
@@ -189,6 +202,14 @@ class CallService extends ChangeNotifier {
         await _handleIncomingReject(payload);
       case 'call_end':
         await _handleIncomingEnd(payload);
+      case 'call_video_upgrade_request':
+        await _handleVideoUpgradeRequest(payload);
+      case 'call_video_upgrade_response':
+        await _handleVideoUpgradeResponse(payload);
+      case 'call_renegotiate_offer':
+        await _handleRenegotiateOffer(payload);
+      case 'call_renegotiate_answer':
+        await _handleRenegotiateAnswer(payload);
     }
   }
 
@@ -224,7 +245,11 @@ class CallService extends ChangeNotifier {
     _pendingOfferSdp = sdp;
     _startRingTimeout();
     unawaited(_sound.playRingtone());
-    unawaited(_sound.showIncomingCallNotification(currentCall!.peerDisplayName));
+    unawaited(_sound.showIncomingCallNotification(
+      callerName: currentCall!.peerDisplayName,
+      callerNumber: currentCall!.peerInternalNumber,
+      isVideo: currentCall!.mediaType == CallMediaType.video,
+    ));
     _safeNotify();
   }
 
@@ -278,7 +303,10 @@ class CallService extends ChangeNotifier {
       'id': call.callId,
       'senderInternalNumber': _localInternalNumber(),
     }));
-    await _endCall(reason: null, notifyPeer: false);
+    // رفض صريح من المستخدم — لا يُحتسَب "مكالمة فائتة" (ذاك خاص بعدم الرد
+    // إطلاقًا)، رغم أن الشرط الآلي في _endCall كان سيُصنِّفه كذلك لولا هذا
+    // الاستثناء الصريح.
+    await _endCall(reason: null, notifyPeer: false, declinedByUser: true);
   }
 
   Future<void> endCall() => _endCall(reason: null, notifyPeer: true);
@@ -335,6 +363,160 @@ class CallService extends ChangeNotifier {
     final call = currentCall;
     if (call == null || payload['id'] != call.callId) return;
     await _endCall(reason: 'أنهى الطرف الآخر المكالمة', notifyPeer: false);
+  }
+
+  // -------------------------------------------------------------------
+  // التحويل من صوت لفيديو أثناء مكالمة جارية (بلا إنهائها/بدء مكالمة جديدة)
+  // -------------------------------------------------------------------
+
+  /// يطلب من الطرف الآخر الموافقة على تحويل المكالمة الصوتية الجارية
+  /// لفيديو — لا تُفتَح الكاميرا هنا إطلاقًا، فقط طلب. الكاميرا تُفتَح لاحقًا
+  /// فقط بعد وصول موافقة صريحة (راجع _handleVideoUpgradeResponse)، تحقيقًا
+  /// لمطلب "لا يتم تشغيل كاميرا الطرف الآخر تلقائيًا بدون موافقته".
+  Future<void> requestVideoUpgrade() async {
+    final call = currentCall;
+    if (call == null ||
+        call.state != CallState.active ||
+        call.mediaType != CallMediaType.audio ||
+        call.pendingOutgoingVideoUpgrade) {
+      return;
+    }
+    call.pendingOutgoingVideoUpgrade = true;
+    _safeNotify();
+    final delivered = await _sendSignal(call.peerInternalNumber, {
+      'type': 'call_video_upgrade_request',
+      'id': call.callId,
+      'senderInternalNumber': _localInternalNumber(),
+    });
+    if (!delivered) {
+      call.pendingOutgoingVideoUpgrade = false;
+      _safeNotify();
+      return;
+    }
+    _videoUpgradeTimer?.cancel();
+    _videoUpgradeTimer = Timer(const Duration(seconds: 20), () {
+      // لم يردّ الطرف الآخر خلال المهلة — يُعامَل كرفض ضمني، فتستمر المكالمة
+      // الصوتية بشكل طبيعي (نفس مطلب "إذا لم يرد").
+      if (currentCall == call && call.pendingOutgoingVideoUpgrade) {
+        call.pendingOutgoingVideoUpgrade = false;
+        _safeNotify();
+      }
+    });
+  }
+
+  void _cancelVideoUpgradeTimeout() {
+    _videoUpgradeTimer?.cancel();
+    _videoUpgradeTimer = null;
+  }
+
+  Future<void> _handleVideoUpgradeRequest(Map<String, dynamic> payload) async {
+    final call = currentCall;
+    if (call == null ||
+        payload['id'] != call.callId ||
+        call.state != CallState.active ||
+        call.mediaType != CallMediaType.audio) {
+      return;
+    }
+    call.pendingIncomingVideoUpgrade = true;
+    _safeNotify();
+  }
+
+  /// يُستدعى من واجهة المستخدم عندما يقبل/يرفض طلبًا واردًا للتحويل لفيديو
+  /// (راجع _handleVideoUpgradeRequest أعلاه الذي يُظهِر الطلب أولًا).
+  Future<void> respondToVideoUpgrade(bool accepted) async {
+    final call = currentCall;
+    if (call == null || !call.pendingIncomingVideoUpgrade) return;
+    call.pendingIncomingVideoUpgrade = false;
+    _safeNotify();
+    await _sendSignal(call.peerInternalNumber, {
+      'type': 'call_video_upgrade_response',
+      'id': call.callId,
+      'senderInternalNumber': _localInternalNumber(),
+      'accepted': accepted,
+    });
+    // القبول لا يفتح الكاميرا هنا — ذلك يحدث لاحقًا في _handleRenegotiateOffer
+    // عند وصول عرض SDP الفعلي من الطرف الطالب، بعد أن يضيف هو مسار الفيديو
+    // ويبدأ التفاوض. هذا يبقي فتح كاميرتَي الطرفين متزامنًا مع جولة تفاوض
+    // SDP واحدة فقط، بدل تفاوضين منفصلين.
+  }
+
+  Future<void> _handleVideoUpgradeResponse(Map<String, dynamic> payload) async {
+    final call = currentCall;
+    final pc = _pc;
+    if (call == null || pc == null || payload['id'] != call.callId || !call.pendingOutgoingVideoUpgrade) {
+      return;
+    }
+    _cancelVideoUpgradeTimeout();
+    call.pendingOutgoingVideoUpgrade = false;
+    if (payload['accepted'] != true) {
+      _safeNotify();
+      return;
+    }
+    try {
+      final videoStream = await navigator.mediaDevices.getUserMedia({
+        'audio': false,
+        'video': {'facingMode': 'user'},
+      });
+      final videoTrack = videoStream.getVideoTracks().first;
+      await pc.addTrack(videoTrack, _localStream ?? videoStream);
+      _localStream?.addTrack(videoTrack);
+      localRenderer.srcObject = _localStream ?? videoStream;
+      isCameraOff = false;
+
+      final offer = await pc.createOffer({'offerToReceiveAudio': true, 'offerToReceiveVideo': true});
+      await pc.setLocalDescription(offer);
+      await _sendSignal(call.peerInternalNumber, {
+        'type': 'call_renegotiate_offer',
+        'id': call.callId,
+        'senderInternalNumber': _localInternalNumber(),
+        'sdp': offer.sdp,
+      });
+      call.mediaType = CallMediaType.video;
+      _safeNotify();
+    } catch (_) {
+      // تعذّر فتح الكاميرا أو التفاوض — المكالمة الصوتية تستمر بلا أي
+      // تعطيل، فقط يبقى التحويل لفيديو غير متاح هذه المرة.
+    }
+  }
+
+  Future<void> _handleRenegotiateOffer(Map<String, dynamic> payload) async {
+    final call = currentCall;
+    final pc = _pc;
+    final sdp = payload['sdp'];
+    if (call == null || pc == null || payload['id'] != call.callId || sdp is! String) return;
+    try {
+      final videoStream = await navigator.mediaDevices.getUserMedia({
+        'audio': false,
+        'video': {'facingMode': 'user'},
+      });
+      final videoTrack = videoStream.getVideoTracks().first;
+      await pc.addTrack(videoTrack, _localStream ?? videoStream);
+      _localStream?.addTrack(videoTrack);
+      localRenderer.srcObject = _localStream ?? videoStream;
+      isCameraOff = false;
+
+      await pc.setRemoteDescription(RTCSessionDescription(sdp, 'offer'));
+      final answer = await pc.createAnswer({'offerToReceiveAudio': true, 'offerToReceiveVideo': true});
+      await pc.setLocalDescription(answer);
+      await _sendSignal(call.peerInternalNumber, {
+        'type': 'call_renegotiate_answer',
+        'id': call.callId,
+        'senderInternalNumber': _localInternalNumber(),
+        'sdp': answer.sdp,
+      });
+      call.mediaType = CallMediaType.video;
+      _safeNotify();
+    } catch (_) {
+      // فشل تفعيل الفيديو من هذا الطرف — المكالمة الصوتية تستمر بلا تعطيل.
+    }
+  }
+
+  Future<void> _handleRenegotiateAnswer(Map<String, dynamic> payload) async {
+    final call = currentCall;
+    final pc = _pc;
+    final sdp = payload['sdp'];
+    if (call == null || pc == null || payload['id'] != call.callId || sdp is! String) return;
+    await pc.setRemoteDescription(RTCSessionDescription(sdp, 'answer'));
   }
 
   // -------------------------------------------------------------------
@@ -449,9 +631,21 @@ class CallService extends ChangeNotifier {
     _ringTimer = null;
   }
 
-  Future<void> _endCall({required String? reason, bool notifyPeer = true}) async {
+  Future<void> _endCall({
+    required String? reason,
+    bool notifyPeer = true,
+    bool declinedByUser = false,
+  }) async {
     final call = currentCall;
+    // مكالمة واردة انتهت (بالمهلة أو لأن المتصل أنهاها هو) قبل أن يُرَدّ
+    // عليها إطلاقًا = فائتة. الرفض الصريح (declinedByUser) مستثنى عمدًا —
+    // ليس "فوات"، بل قرار واعٍ من المستخدم.
+    final wasMissed = !declinedByUser &&
+        call != null &&
+        call.direction == CallDirection.incoming &&
+        call.state == CallState.ringing;
     _cancelRingTimeout();
+    _cancelVideoUpgradeTimeout();
     unawaited(_sound.stopRingtone());
     unawaited(_sound.stopRingback());
     unawaited(_sound.cancelIncomingCallNotification());
@@ -467,6 +661,7 @@ class CallService extends ChangeNotifier {
     if (call != null) {
       call.state = CallState.ended;
       call.endReason = reason;
+      if (wasMissed) _onMissedCall?.call(call.peerInternalNumber, call.peerDisplayName, call.mediaType);
       _safeNotify();
       // يُبقي بطاقة "انتهت المكالمة" ظاهرة لحظات قبل اختفائها، بدل قفل
       // الواجهة فورًا لمكالمة سابقة.
@@ -523,6 +718,7 @@ class CallService extends ChangeNotifier {
     _disposed = true;
     _ringTimer?.cancel();
     _clearTimer?.cancel();
+    _videoUpgradeTimer?.cancel();
     unawaited(_teardownMedia());
     unawaited(localRenderer.dispose());
     unawaited(remoteRenderer.dispose());

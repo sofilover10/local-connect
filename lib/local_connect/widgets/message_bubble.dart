@@ -206,6 +206,22 @@ class MessageBubble extends StatelessWidget {
           myInternalNumber: myInternalNumber,
           onRsvp: onRsvp,
         );
+      case MessageKind.missedCall:
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              message.missedCallIsVideo == true ? Icons.videocam_off : Icons.call_missed,
+              size: 16,
+              color: Colors.redAccent,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              message.missedCallIsVideo == true ? 'مكالمة فيديو فائتة' : 'مكالمة صوتية فائتة',
+              style: TextStyle(color: textColor),
+            ),
+          ],
+        );
     }
   }
 
