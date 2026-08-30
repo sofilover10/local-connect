@@ -775,8 +775,15 @@ class CallService extends ChangeNotifier {
   /// انقطاع مؤقت (تذبذب شبكة، تبديل Wi-Fi↔بيانات الجوال) لا يجب أن يُنهي
   /// المكالمة فورًا — يحاول استعادة الاتصال عبر ICE restart أولًا، ويمهل
   /// الاتصال 15 ثانية للعودة قبل إنهاء المكالمة فعليًا إن لم ينجح.
+  ///
+  /// **قيد أمان صريح**: لا يعمل هذا إطلاقًا إلا لمكالمة وصلت فعليًا لحالة
+  /// active مرة واحدة على الأقل (أي قُبِلت وتأسّس اتصالها بنجاح من قبل).
+  /// تغيّر الشبكة وحده يجب ألا "يُكمل" اتصال مكالمة لم يوافَق عليها بعد
+  /// (ringing/connecting) — لو حدث تذبذب شبكة أثناء التفاوض الأولي قبل أول
+  /// اتصال ناجح، تُترَك لمهلة الرنين العادية (45 ثانية) بدل أي محاولة
+  /// استعادة هنا.
   void _handleConnectionTrouble(CallSession call, RTCPeerConnection pc) {
-    if (currentCall != call) return;
+    if (currentCall != call || call.connectedAt == null) return;
     _logDiagnostic('انقطاع اتصال — محاولة استعادة (ICE restart)...');
     try {
       pc.restartIce();
@@ -832,7 +839,8 @@ class CallService extends ChangeNotifier {
         'senderInternalNumber': _localInternalNumber(),
       }));
     }
-    await _teardownMedia();
+    _logDiagnostic('تنظيف موارد المكالمة (cleanup) — السبب: ${reason ?? "إنهاء عادي"}');
+    await _cleanupCallResources();
 
     if (call != null) {
       call.state = CallState.ended;
@@ -851,7 +859,13 @@ class CallService extends ChangeNotifier {
     }
   }
 
-  Future<void> _teardownMedia() async {
+  /// المسار الموحَّد الوحيد لتحرير كل موارد المكالمة — يُستدعى من _endCall
+  /// (وبالتبعية من كل مسارات الإنهاء: hang up، رفض، انتهاء مهلة، فشل
+  /// اتصال، ICE فشل، إغلاق الشاشة يدويًا) ومن dispose(). آمن للاستدعاء
+  /// أكثر من مرة (idempotent) — كل خطوة تتحقق أولًا أنها لم تُنفَّذ بعد
+  /// (المتغيرات تُصفَّر فور استخدامها) فلا يحدث أي خطأ أو عمل مكرَّر لو
+  /// استُدعيت مرتين متتاليتين.
+  Future<void> _cleanupCallResources() async {
     _pendingRemoteCandidates.clear();
     _remoteDescriptionSet = false;
     _pendingOfferSdp = null;
@@ -868,17 +882,31 @@ class CallService extends ChangeNotifier {
       for (final track in stream.getTracks()) {
         await track.stop();
       }
-      // إيقاف المسارات (getTracks/stop أعلاه) لا يُصفِّر بالضرورة وضع صوت
-      // النظام (AudioManager على أندرويد) الذي تضبطه المكالمة عند بدئها
-      // (سمّاعة خارجية/داخلية) — يبقى أحيانًا "عالقًا" على وضع المكالمة رغم
-      // توقف كل المسارات فعليًا، فيظهر مؤشر الميكروفون في النظام وكأنه لا
-      // يزال نشطًا. إعادته للوضع الطبيعي (سمّاعة داخلية) هنا صراحة.
-      try {
-        await Helper.setSpeakerphoneOn(false);
-      } catch (_) {
-        // لا شيء — تحسين إضافي، ليس شرطًا لإنهاء المكالمة بنجاح.
-      }
     }
+
+    // خطوتان منفصلتان ضروريتان معًا لتحرير الميكروفون فعليًا من منظور بقية
+    // النظام (تطبيقات أخرى، أو حتى ميزة "رسالة صوتية" في هذا التطبيق نفسه):
+    // 1) setSpeakerphoneOn(false): يعيد مسار الصوت (سمّاعة خارجية/داخلية).
+    // 2) clearAndroidCommunicationDevice(): يُصرِّح لأندرويد أن "جهاز
+    //    الاتصال النشط" (Communication Device) لم يعد مطلوبًا — بدون هذا
+    //    تحديدًا، إيقاف المسارات وحده (getTracks/stop أعلاه) لا يكفي؛
+    //    يبقى أندرويد يعتبر التطبيق "في جلسة اتصال" على مستوى النظام،
+    //    فتفشل أو تُسجَّل فارغة أي محاولة تسجيل صوت لاحقة (حتى من تطبيق
+    //    آخر تمامًا) حتى تنتهي هذه الجلسة العالقة صراحة. هذا التابع
+    //    موثَّق رسميًا في flutter_webrtc لهذا الغرض بالضبط: "After Android
+    //    app finishes a session, on audio focus loss, clear the active
+    //    communication device."
+    try {
+      await Helper.setSpeakerphoneOn(false);
+    } catch (_) {
+      // لا شيء — تحسين إضافي، ليس شرطًا لإنهاء المكالمة بنجاح.
+    }
+    try {
+      await Helper.clearAndroidCommunicationDevice();
+    } catch (_) {
+      // لا شيء — منصّات غير أندرويد لا تدعم هذا الاستدعاء أصلًا.
+    }
+
     isSpeakerOn = false;
     isMuted = false;
     // ضبط srcObject على مُصيِّر لم يُهيَّأ بعد (initialize()) يرمي استثناءً —
@@ -896,7 +924,7 @@ class CallService extends ChangeNotifier {
     _clearTimer?.cancel();
     _videoUpgradeTimer?.cancel();
     _reconnectGraceTimer?.cancel();
-    unawaited(_teardownMedia());
+    unawaited(_cleanupCallResources());
     unawaited(localRenderer.dispose());
     unawaited(remoteRenderer.dispose());
     super.dispose();
