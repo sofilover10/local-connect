@@ -50,9 +50,21 @@ class GroupCallService extends ChangeNotifier {
   final String Function() _localInternalNumber;
   final String Function() _localDisplayName;
 
+  /// راجع نفس التوثيق في CallService._rtcConfiguration — بلا خادم TURN،
+  /// تفشل أي مكالمة (جماعية هنا) بين طرفين خلف NAT مقيَّد (شائع على بيانات
+  /// الجوال) تمامًا بلا أي بديل.
   static const Map<String, dynamic> _rtcConfiguration = {
     'iceServers': [
       {'urls': 'stun:stun.l.google.com:19302'},
+      {
+        'urls': [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:443',
+          'turn:openrelay.metered.ca:443?transport=tcp',
+        ],
+        'username': 'openrelayproject',
+        'credential': 'openrelayproject',
+      },
     ],
   };
 

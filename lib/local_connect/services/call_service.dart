@@ -60,9 +60,26 @@ class CallService extends ChangeNotifier {
   /// الافتراضي العام لأي هوية جديدة في التطبيق).
   final String? Function(String internalNumber)? _contactDisplayNameFor;
 
+  /// STUN وحده يكتشف عنوانك العام لمحاولة اتصال مباشر (hole punching)، لكن
+  /// لا يعمل بديلًا إن فشلت المحاولة المباشرة — وهذا شائع جدًا خلف NAT
+  /// المُشغِّلين المقيَّد (CGNAT، شائع على بيانات الجوال) حيث يفشل hole
+  /// punching غالبًا. بدون خادم TURN يُرحِّل الوسائط كحل أخير، كانت أي
+  /// مكالمة بين طرفين خلف مثل هذا NAT تفشل تمامًا بلا أي بديل. خادم TURN
+  /// أدناه عام ومجاني (Open Relay Project) — حل مؤقّت عملي؛ الأفضل لاحقًا
+  /// استضافة خادم TURN خاص (coturn) على نفس خادم المُرحِّل (SofiNet) لتحكّم
+  /// وخصوصية أفضل، لكن هذا يحتاج وصولًا لإدارة الخادم غير متاح حاليًا هنا.
   static const Map<String, dynamic> _rtcConfiguration = {
     'iceServers': [
       {'urls': 'stun:stun.l.google.com:19302'},
+      {
+        'urls': [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:443',
+          'turn:openrelay.metered.ca:443?transport=tcp',
+        ],
+        'username': 'openrelayproject',
+        'credential': 'openrelayproject',
+      },
     ],
   };
 
