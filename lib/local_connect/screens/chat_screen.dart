@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
@@ -40,6 +41,42 @@ class _ChatScreenState extends State<ChatScreen> {
   /// المدة الحقيقية.
   DateTime? _recordingStartedAt;
 
+  /// مسار تسجيل صوتي أُوقِف للتوّ وينتظر معاينة المستخدم قبل إرساله —
+  /// null يعني لا معاينة قائمة (إما لم يُسجَّل شيء بعد، أو أُرسِل/حُذِف
+  /// التسجيل السابق فعلًا). وضع المعاينة يستبدل شريط الكتابة العادي
+  /// بالكامل، تحقيقًا للتسلسل المطلوب: تسجيل ← إيقاف ← معاينة ← إرسال/حذف
+  /// — الضغط على "إيقاف" وحده لم يعد يُرسِل الرسالة تلقائيًا كالسابق.
+  String? _voicePreviewPath;
+  Duration _voicePreviewDuration = Duration.zero;
+  PlayerState _previewPlayerState = PlayerState.stopped;
+  Duration _previewPosition = Duration.zero;
+
+  /// إنشاء AudioPlayer() يُطلِق فعليًا استدعاء قناة منصّة (تهيئة عامة) —
+  /// إن جرى ذلك بلا شرط لكل شاشة محادثة (حتى الفارغة تمامًا التي لا يفتح
+  /// فيها المستخدم التسجيل الصوتي إطلاقًا)، يفشل بصمت على منصّات/بيئات
+  /// بلا معالج فعلي لتلك القناة (بيئة `flutter test` تحديدًا). يُنشَأ الآن
+  /// كسولًا عند أول استخدام فعلي فقط.
+  AudioPlayer? _previewPlayerInstance;
+  AudioPlayer get _previewPlayer {
+    final existing = _previewPlayerInstance;
+    if (existing != null) return existing;
+    final player = AudioPlayer();
+    player.onPlayerStateChanged.listen((state) {
+      if (mounted) setState(() => _previewPlayerState = state);
+    });
+    player.onPositionChanged.listen((position) {
+      if (mounted) setState(() => _previewPosition = position);
+    });
+    // عند وصول المشغّل لنهاية التسجيل، يعيده audioplayers لحالة "متوقّف"
+    // تلقائيًا لكن يُبقي الموضع عند آخر نقطة — إعادته لبداية الشريط هنا
+    // حتى يظهر زر "تشغيل" جاهزًا لإعادة الاستماع من البداية مباشرة.
+    player.onPlayerComplete.listen((_) {
+      if (mounted) setState(() => _previewPosition = Duration.zero);
+    });
+    _previewPlayerInstance = player;
+    return player;
+  }
+
   /// يمنع بدء عملية اختيار/إرسال ملف ثانية بينما واحدة قائمة بالفعل — بدونه،
   /// نقرات متكررة (مثلًا لأن منتقي الملفات تأخّر بالظهور والمستخدم ظنّ أن
   /// نقرته الأولى لم تُسجَّل) تفتح المنتقي أكثر من مرة، فيُرسَل نفس الملف
@@ -73,6 +110,20 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollController.dispose();
     _recordingTicker?.cancel();
     _recorder.dispose();
+    // لو غادر المستخدم الشاشة أثناء وضع المعاينة (بلا إرسال ولا حذف
+    // صريح)، يجب إيقاف مشغّل المعاينة وتحرير موارده صراحة — بلا هذا يبقى
+    // ملف الصوت مفتوحًا لدى المشغّل رغم مغادرة الشاشة تمامًا.
+    _previewPlayerInstance?.dispose();
+    final leftoverPreview = _voicePreviewPath;
+    if (leftoverPreview != null) {
+      unawaited(() async {
+        try {
+          await File(leftoverPreview).delete();
+        } catch (_) {
+          // لا شيء — تنظيف أفضل-جهد لملف مؤقت، ليس حرجًا.
+        }
+      }());
+    }
     super.dispose();
   }
 
@@ -407,47 +458,15 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
   }
 
+  /// زر الميكروفون: يبدأ تسجيلًا جديدًا إن لم يكن هناك تسجيل جارٍ أو
+  /// معاينة قائمة بالفعل. إيقاف التسجيل الجاري منفصل تمامًا (_stopRecording)
+  /// — راجع توثيقه لسبب هذا الفصل.
   Future<void> _toggleVoiceRecording(BuildContext context) async {
     if (_isRecording) {
-      _recordingTicker?.cancel();
-      // يُحفَظ قبل تصفيره في setState أدناه — هذه هي المدة الحقيقية
-      // المعروفة فعليًا وقت التسجيل (بدل استخراجها لاحقًا من الملف، وهو ما
-      // كان يُظهِر "00:00" لحظيًا في فقاعة الرسالة قبل أن يُحمِّل المشغّل
-      // الملف).
-      final recordedDuration = _recordingStartedAt == null
-          ? _recordingElapsed
-          : DateTime.now().difference(_recordingStartedAt!);
-      final path = await _recorder.stop();
-      _recordingStartedAt = null;
-      setState(() {
-        _isRecording = false;
-        _recordingElapsed = Duration.zero;
-      });
-      if (!context.mounted) return;
-      if (path == null) {
-        // المسجّل لم يُنتِج ملفًا (مثلًا تسجيل قصير جدًا، أو خطأ داخلي في
-        // الحزمة) — بدون هذا التنبيه، يبدو الأمر للمستخدم وكأن التسجيل
-        // "اختفى" بصمت دون أي تفسير أو رسالة صوتية مُرسَلة.
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذّر حفظ التسجيل الصوتي — جرّب تسجيلًا أطول قليلًا')),
-        );
-        return;
-      }
-      final sent = await AppScope.of(context).sendAttachment(
-        conversationId: widget.conversation.id,
-        filePath: path,
-        kind: MessageKind.voice,
-        mimeType: 'audio/m4a',
-        durationMs: recordedDuration.inMilliseconds,
-      );
-      if (!sent && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تعذّر إرسال التسجيل الصوتي — الملف فارغ أو غير صالح')),
-        );
-      }
-      _scrollToBottom();
+      await _stopRecording();
       return;
     }
+    if (_voicePreviewPath != null) return; // معاينة قائمة بالفعل — لا تسجيل جديد قبل حسمها.
 
     if (!await _recorder.hasPermission()) {
       if (context.mounted) {
@@ -470,6 +489,145 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!mounted) return;
       setState(() => _recordingElapsed += const Duration(seconds: 1));
     });
+  }
+
+  /// إيقاف التسجيل الجاري وحده — **لا يُرسِل شيئًا**. يُحرِّر المسجِّل
+  /// (الميكروفون) فورًا عبر _recorder.stop() تمامًا كالسابق، لكن بدل
+  /// الإرسال التلقائي، ينتقل لوضع "معاينة" (_voicePreviewPath) حتى يستمع
+  /// المستخدم للتسجيل ويقرر بنفسه: إرسال أم حذف. هذا يحقق التسلسل المطلوب
+  /// تسجيل←إيقاف←معاينة←إرسال/حذف بدل تسجيل←إيقاف←إرسال تلقائي كالسابق.
+  Future<void> _stopRecording() async {
+    _recordingTicker?.cancel();
+    // يُحفَظ قبل تصفيره في setState أدناه — هذه هي المدة الحقيقية المعروفة
+    // فعليًا وقت التسجيل (بدل استخراجها لاحقًا من الملف).
+    final recordedDuration = _recordingStartedAt == null
+        ? _recordingElapsed
+        : DateTime.now().difference(_recordingStartedAt!);
+    final path = await _recorder.stop();
+    _recordingStartedAt = null;
+    setState(() {
+      _isRecording = false;
+      _recordingElapsed = Duration.zero;
+    });
+    if (path == null) {
+      // المسجّل لم يُنتِج ملفًا (مثلًا تسجيل قصير جدًا، أو خطأ داخلي في
+      // الحزمة) — بدون هذا التنبيه، يبدو الأمر للمستخدم وكأن التسجيل
+      // "اختفى" بصمت.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذّر حفظ التسجيل الصوتي — جرّب تسجيلًا أطول قليلًا')),
+        );
+      }
+      return;
+    }
+    setState(() {
+      _voicePreviewPath = path;
+      _voicePreviewDuration = recordedDuration;
+      _previewPosition = Duration.zero;
+      _previewPlayerState = PlayerState.stopped;
+    });
+  }
+
+  Future<void> _togglePreviewPlayback() async {
+    if (_previewPlayerState == PlayerState.playing) {
+      await _previewPlayer.pause();
+    } else {
+      final path = _voicePreviewPath;
+      if (path == null) return;
+      await _previewPlayer.play(DeviceFileSource(path));
+    }
+  }
+
+  Future<void> _seekPreview(Duration position) => _previewPlayer.seek(position);
+
+  /// يحذف التسجيل قيد المعاينة نهائيًا ويعود لحالة الكتابة العادية — لا
+  /// شيء يُرسَل، ولا يبقى أي ملف صوتي مؤقت على القرص.
+  Future<void> _deleteVoicePreview() async {
+    final path = _voicePreviewPath;
+    await _previewPlayer.stop();
+    setState(() {
+      _voicePreviewPath = null;
+      _voicePreviewDuration = Duration.zero;
+      _previewPosition = Duration.zero;
+      _previewPlayerState = PlayerState.stopped;
+    });
+    if (path != null) {
+      try {
+        await File(path).delete();
+      } catch (_) {
+        // لا شيء — تنظيف أفضل-جهد لملف مؤقت، ليس حرجًا.
+      }
+    }
+  }
+
+  /// يُرسِل التسجيل قيد المعاينة صراحةً — هذا هو الفعل الوحيد الذي يُرسِل
+  /// رسالة صوتية الآن؛ الضغط على "إيقاف" وحده لم يعد كافيًا.
+  Future<void> _sendVoicePreview(BuildContext context) async {
+    final path = _voicePreviewPath;
+    final duration = _voicePreviewDuration;
+    if (path == null) return;
+    await _previewPlayer.stop();
+    setState(() {
+      _voicePreviewPath = null;
+      _voicePreviewDuration = Duration.zero;
+      _previewPosition = Duration.zero;
+      _previewPlayerState = PlayerState.stopped;
+    });
+    if (!context.mounted) return;
+    final sent = await AppScope.of(context).sendAttachment(
+      conversationId: widget.conversation.id,
+      filePath: path,
+      kind: MessageKind.voice,
+      mimeType: 'audio/m4a',
+      durationMs: duration.inMilliseconds,
+    );
+    if (!sent && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذّر إرسال التسجيل الصوتي — الملف فارغ أو غير صالح')),
+      );
+    }
+    _scrollToBottom();
+  }
+
+  /// شريط معاينة التسجيل الصوتي — يستبدل شريط الكتابة العادي بالكامل، لا
+  /// يظهر فوقه، تحقيقًا لتسلسل واضح: تسجيل ← إيقاف ← معاينة ← إرسال/حذف.
+  Widget _buildVoicePreviewBar(BuildContext context) {
+    final playing = _previewPlayerState == PlayerState.playing;
+    final totalMs = _voicePreviewDuration.inMilliseconds;
+    final positionMs = _previewPosition.inMilliseconds.clamp(0, totalMs == 0 ? 1 : totalMs);
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(4, 4, 8, 8),
+        child: Row(
+          children: [
+            IconButton(
+              onPressed: _deleteVoicePreview,
+              icon: const Icon(Icons.delete_outline, color: Colors.red),
+              tooltip: 'حذف التسجيل',
+            ),
+            IconButton(
+              onPressed: _togglePreviewPlayback,
+              icon: Icon(playing ? Icons.pause_circle : Icons.play_circle, size: 32),
+              tooltip: playing ? 'إيقاف المعاينة' : 'تشغيل المعاينة',
+            ),
+            Expanded(
+              child: Slider(
+                value: positionMs.toDouble(),
+                max: (totalMs == 0 ? 1 : totalMs).toDouble(),
+                onChanged: totalMs == 0 ? null : (value) => _seekPreview(Duration(milliseconds: value.round())),
+              ),
+            ),
+            Text(_formatDuration(_previewPosition > Duration.zero ? _previewPosition : _voicePreviewDuration)),
+            const SizedBox(width: 4),
+            IconButton.filled(
+              onPressed: () => _sendVoicePreview(context),
+              icon: const Icon(Icons.send),
+              tooltip: 'إرسال',
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _saveToPhoneContacts(BuildContext context) async {
@@ -765,6 +923,8 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
                 )
+              else if (_voicePreviewPath != null)
+                _buildVoicePreviewBar(context)
               else
                 SafeArea(
                   child: Padding(
@@ -797,7 +957,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           onPressed: _editingMessageId != null ? null : () => _toggleVoiceRecording(context),
                           icon: Icon(_isRecording ? Icons.stop_circle : Icons.mic),
                           color: _isRecording ? Colors.red : null,
-                          tooltip: _isRecording ? 'إيقاف وإرسال الرسالة الصوتية' : 'تسجيل رسالة صوتية',
+                          tooltip: _isRecording ? 'إيقاف التسجيل (للمعاينة قبل الإرسال)' : 'تسجيل رسالة صوتية',
                         ),
                         IconButton.filled(
                           onPressed: _isRecording ? null : () => _send(context),
