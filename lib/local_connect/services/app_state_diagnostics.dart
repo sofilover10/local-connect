@@ -85,6 +85,24 @@ extension DiagnosticsExtension on LocalConnectAppState {
               'امنحها من إعدادات النظام: التطبيقات ← LocalConnect ← الإشعارات.',
     ));
 
+    // بدون هذا الاستثناء، بعض الأجهزة (خصوصًا سامسونج One UI) تضع التطبيق
+    // في "سكون عميق" بعد ساعات من الخمول فتقتل خدمة الخلفية الدائمة رغم
+    // وجودها — يتوقف استقبال الرسائل/المكالمات تمامًا ويظهر الجهاز "غير
+    // متصل" لدى الآخرين بلا أي تفسير ظاهر. يُطلَب مرة واحدة تلقائيًا عند
+    // أول فتح للتطبيق (راجع ensureNotificationPermission)، لكن قد يرفضه
+    // المستخدم حينها أو يُسحَب لاحقًا من الإعدادات — هذا الفحص يكشف ذلك.
+    final batteryStatus = await Permission.ignoreBatteryOptimizations.status;
+    checks.add(DiagnosticCheck(
+      label: 'استثناء تحسين البطارية',
+      ok: batteryStatus.isGranted,
+      detail: batteryStatus.isGranted
+          ? 'مُمنوح — التطبيق مستثنى من إجراءات توفير البطارية العدوانية'
+          : 'غير مُمنوح — قد يضع النظام التطبيق في وضع سكون بعد فترة خمول '
+              'طويلة، فيتوقف استقبال الرسائل والمكالمات ويظهر جهازك "غير '
+              'متصل" لدى الآخرين. امنحه من: إعدادات النظام ← التطبيقات ← '
+              'مدى ← البطارية ← "بلا قيود" أو ما يعادلها.',
+    ));
+
     final pendingCount = _messagesByConversation.values.expand((m) => m).where(
           (m) => m.outgoing && (m.status == MessageStatus.queued || m.status == MessageStatus.failed),
         ).length;

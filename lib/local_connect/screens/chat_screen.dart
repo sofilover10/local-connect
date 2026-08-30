@@ -579,7 +579,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       Text(
                         isGroup
                             ? '${widget.conversation.memberInternalNumbers.length + 1} ${isChannel ? 'متابعون' : 'أعضاء'}'
-                            : (online ? 'متصل الآن على الشبكة' : 'غير ظاهر حاليًا — سيتم الإرسال عند ظهوره'),
+                            : (online ? 'متصل الآن على الشبكة' : 'غير متصل الآن'),
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontSize: 11, fontWeight: FontWeight.normal),
                       ),
                     ],

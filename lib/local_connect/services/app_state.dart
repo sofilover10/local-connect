@@ -284,6 +284,7 @@ class LocalConnectAppState extends ChangeNotifier with WidgetsBindingObserver {
   /// تكون شاشة (Activity) فعليًا متصلة ليمكن عرض حوار النظام.
   bool _notificationPermissionRequested = false;
   static const _fullScreenIntentPromptKey = 'full_screen_intent_prompted';
+  static const _batteryOptimizationPromptKey = 'battery_optimization_prompted';
   Future<void> ensureNotificationPermission() async {
     if (_notificationPermissionRequested) return;
     _notificationPermissionRequested = true;
@@ -303,6 +304,21 @@ class LocalConnectAppState extends ChangeNotifier with WidgetsBindingObserver {
     if (_store.identityBox.get(_fullScreenIntentPromptKey) == null) {
       await _store.identityBox.put(_fullScreenIntentPromptKey, 'true');
       unawaited(callService.ensureFullScreenIntentPermission());
+    }
+
+    // نفس منطق "مرة واحدة فعليًا عبر عمر التثبيت" أعلاه — بدون استثناء
+    // تحسين البطارية، تضع بعض الأجهزة (خصوصًا سامسونج One UI) التطبيق في
+    // "سكون عميق" بعد ساعات من الخمول فتقتل خدمة الخلفية الدائمة، فيتوقف
+    // استقبال الرسائل/المكالمات تمامًا ويظهر الجهاز "غير متصل" لدى الآخرين
+    // بلا أي تفسير — هذا بالضبط ما أبلغ عنه المستخدم (لا يرنّ، ويظهر غير
+    // متصل بعد ترك التطبيق لساعات).
+    if (_store.identityBox.get(_batteryOptimizationPromptKey) == null) {
+      await _store.identityBox.put(_batteryOptimizationPromptKey, 'true');
+      try {
+        await Permission.ignoreBatteryOptimizations.request();
+      } catch (_) {
+        // لا شيء — منصّات/بيئات بلا معالج فعلي لهذه القناة.
+      }
     }
   }
 

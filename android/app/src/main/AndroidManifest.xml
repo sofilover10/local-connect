@@ -46,6 +46,11 @@
     <!-- تُظهر اسم المتصل فورًا فوق شاشة القفل عند ورود مكالمة، حتى لو كان
          التطبيق مغلقًا تمامًا وقت الاتصال. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
+    <!-- بدونها، بعض الأجهزة (خصوصًا سامسونج One UI) تضع التطبيق في "سكون
+         عميق" بعد فترة طويلة من الخمول، فتقتل خدمة الخلفية الدائمة رغم
+         وجودها — يتوقف استقبال الرسائل/المكالمات تمامًا ويظهر الجهاز
+         "غير متصل" لدى الآخرين، دون أي تنبيه للمستخدم بالسبب. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
     <application
