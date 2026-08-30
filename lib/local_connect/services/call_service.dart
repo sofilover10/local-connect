@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -32,11 +33,13 @@ class CallService extends ChangeNotifier {
     required String Function() localDisplayName,
     String? Function(String internalNumber)? contactDisplayNameFor,
     void Function(String peerInternalNumber, String peerDisplayName, CallMediaType mediaType)? onMissedCall,
+    void Function(String message)? onCallDiagnostic,
   })  : _sendSignal = sendSignal,
         _localInternalNumber = localInternalNumber,
         _localDisplayName = localDisplayName,
         _contactDisplayNameFor = contactDisplayNameFor,
-        _onMissedCall = onMissedCall {
+        _onMissedCall = onMissedCall,
+        _onCallDiagnostic = onCallDiagnostic {
     // يستقبل ضغطة زر "رد"/"رفض" على إشعار المكالمة الواردة الأصلي (انظر
     // CallActionReceiver.kt على جانب أندرويد) — ضروري لأن الشاشة الكاملة
     // قد لا تُفتَح تلقائيًا (أندرويد 14+ يقيّدها)، فيبقى هذان الزرّان
@@ -62,6 +65,40 @@ class CallService extends ChangeNotifier {
   final void Function(String peerInternalNumber, String peerDisplayName, CallMediaType mediaType)?
       _onMissedCall;
 
+  /// سجل تشخيصي مرئي لدورة حياة المكالمة (حالة ICE، نوع الشبكة، سبب فشل
+  /// الاتصال...) — يُسجَّل عبر AppState.recordError ليظهر مباشرة في شاشة
+  /// "فحص الأخطاء" دون الحاجة لأي أداة تصحيح خارجية (adb logcat وغيرها)
+  /// غير متاحة عمليًا لمعظم من يختبر التطبيق ميدانيًا.
+  final void Function(String message)? _onCallDiagnostic;
+  void _logDiagnostic(String message) => _onCallDiagnostic?.call(message);
+
+  /// نفس منطق تصنيف واجهات بيانات الجوال المستخدَم أصلًا في
+  /// LanDiscoveryService — لا حزمة اتصال منفصلة (connectivity_plus وغيرها)
+  /// هنا، فقط فحص اسم الواجهة النشطة (rmnet/ccmni/wwan/pdp لبيانات الجوال،
+  /// أي شيء آخر يُعتبَر Wi-Fi/إيثرنت). كافٍ لتصنيف تشخيصي، ليس دقيقًا
+  /// 100% على كل الشرائح، لكنه يعطي إشارة واضحة في السجل بلا اعتماد جديد.
+  static const _cellularInterfacePrefixes = ['rmnet', 'ccmni', 'wwan', 'pdp'];
+
+  Future<void> _logCurrentNetworkType() async {
+    try {
+      final interfaces =
+          await NetworkInterface.list(includeLoopback: false, type: InternetAddressType.IPv4);
+      final names = interfaces.map((i) => i.name.toLowerCase()).toList();
+      final hasCellular = names.any((n) => _cellularInterfacePrefixes.any(n.startsWith));
+      final hasWifi = names.any((n) => !_cellularInterfacePrefixes.any(n.startsWith));
+      final label = hasCellular && hasWifi
+          ? 'Wi-Fi + بيانات جوال معًا'
+          : hasCellular
+              ? 'بيانات جوال'
+              : hasWifi
+                  ? 'Wi-Fi/إيثرنت'
+                  : 'غير معروف';
+      _logDiagnostic('نوع الشبكة الحالي: $label (واجهات: ${names.join(", ")})');
+    } catch (error) {
+      _logDiagnostic('تعذّرت قراءة نوع الشبكة: $error');
+    }
+  }
+
   /// يبحث عن اسم جهة اتصال محفوظ محليًا لرقم داخلي معيَّن، أو null إن لم
   /// تكن محفوظة. عند وجوده، يُفضَّل على الاسم الذي يدّعيه الطرف المتصل نفسه
   /// عبر الشبكة (`callerDisplayName`) — فجهة اتصال حفظتَها أنت باسم تعرفه
@@ -77,6 +114,13 @@ class CallService extends ChangeNotifier {
   /// أدناه عام ومجاني (Open Relay Project) — حل مؤقّت عملي؛ الأفضل لاحقًا
   /// استضافة خادم TURN خاص (coturn) على نفس خادم المُرحِّل (SofiNet) لتحكّم
   /// وخصوصية أفضل، لكن هذا يحتاج وصولًا لإدارة الخادم غير متاح حاليًا هنا.
+  ///
+  /// عدّة مسارات TURN مختلفة (UDP، TCP، وTLS عبر المنفذ 443 تحديدًا) —
+  /// كثير من شبكات بيانات الجوال تحجب أو تقيّد UDP الخام (وهو ما يعتمد
+  /// عليه STUN/TURN الأساسي)، بينما حركة TLS على المنفذ 443 تبدو كأي اتصال
+  /// HTTPS عادي فتمرّ فعليًا عبر تقريبًا كل شبكة/جدار حماية. ICE يجرّب كل
+  /// هذه المسارات تلقائيًا ويختار أول ما ينجح؛ مسار غير مدعوم من الخادم
+  /// يُتجاهَل بصمت بلا تعطيل البقية.
   static const Map<String, dynamic> _rtcConfiguration = {
     'iceServers': [
       {'urls': 'stun:stun.l.google.com:19302'},
@@ -85,6 +129,7 @@ class CallService extends ChangeNotifier {
           'turn:openrelay.metered.ca:80',
           'turn:openrelay.metered.ca:443',
           'turn:openrelay.metered.ca:443?transport=tcp',
+          'turns:openrelay.metered.ca:443?transport=tcp',
         ],
         'username': 'openrelayproject',
         'credential': 'openrelayproject',
@@ -160,25 +205,33 @@ class CallService extends ChangeNotifier {
         await _pc!.addTrack(track, _localStream!);
       }
 
+      _logDiagnostic('بدء مكالمة صادرة (${mediaType.name}) إلى $peerInternalNumber');
+      unawaited(_logCurrentNetworkType());
       final offer = await _pc!.createOffer({
         'offerToReceiveAudio': true,
         'offerToReceiveVideo': mediaType == CallMediaType.video,
       });
       await _pc!.setLocalDescription(offer);
 
-      final delivered = await _sendSignal(peerInternalNumber, {
-        'type': 'call_offer',
-        'id': callId,
-        'senderInternalNumber': _localInternalNumber(),
-        'callerDisplayName': _localDisplayName(),
-        'mediaType': mediaType.name,
-        'sdp': offer.sdp,
-      });
+      final delivered = await _sendSignalWithRetry(
+        peerInternalNumber,
+        {
+          'type': 'call_offer',
+          'id': callId,
+          'senderInternalNumber': _localInternalNumber(),
+          'callerDisplayName': _localDisplayName(),
+          'mediaType': mediaType.name,
+          'sdp': offer.sdp,
+        },
+        label: 'call_offer',
+      );
 
       if (!delivered) {
+        _logDiagnostic('فشل إيصال call_offer نهائيًا — إنهاء المحاولة');
         await _endCall(reason: 'تعذّر الوصول للطرف الآخر الآن', notifyPeer: false);
         return;
       }
+      _logDiagnostic('وصل call_offer — بانتظار رد الطرف الآخر (رنين)');
       _startRingTimeout();
       unawaited(_sound.playRingback());
     } catch (error) {
@@ -250,6 +303,15 @@ class CallService extends ChangeNotifier {
       callerNumber: currentCall!.peerInternalNumber,
       isVideo: currentCall!.mediaType == CallMediaType.video,
     ));
+    // بيانات تشخيصية مباشرة لمشكلة "لا تظهر شاشة المكالمة فوق شاشة القفل" —
+    // إن كانت هذه الصلاحية false هنا، فهذا يؤكد أن السبب هو الصلاحية
+    // تحديدًا (يُصلَح من شاشة "فحص الأخطاء" ← زر "إصلاح")؛ إن كانت true
+    // ولا تزال المشكلة قائمة، فالسبب شيء آخر (غالبًا تقييد خاص بمصنّع
+    // الجهاز يتجاوز واجهات أندرويد القياسية).
+    unawaited(hasFullScreenIntentPermission().then(
+      (granted) => _logDiagnostic('مكالمة واردة: صلاحية الشاشة الكاملة = $granted'),
+    ));
+    unawaited(_logCurrentNetworkType());
     _safeNotify();
   }
 
@@ -267,6 +329,7 @@ class CallService extends ChangeNotifier {
     _safeNotify();
 
     try {
+      _logDiagnostic('تم القبول محليًا — جارٍ تجهيز الوسائط والرد');
       await _openLocalMedia(call.mediaType);
       _pc = await createPeerConnection(_rtcConfiguration);
       _wirePeerConnectionCallbacks();
@@ -284,13 +347,30 @@ class CallService extends ChangeNotifier {
       });
       await _pc!.setLocalDescription(answer);
 
-      await _sendSignal(call.peerInternalNumber, {
-        'type': 'call_answer',
-        'id': call.callId,
-        'senderInternalNumber': _localInternalNumber(),
-        'sdp': answer.sdp,
-      });
+      // حرِج: قبل هذا الإصلاح لم يُتحقَّق من نجاح إيصال call_answer إطلاقًا
+      // — لو فشل (شائع عبر المُرحِّل بين شبكتين مختلفتين)، يبقى هذا الجهاز
+      // "جارٍ الاتصال..." بصمت حتى تنتهي مهلة رنين المُتصِل (45 ثانية)
+      // فيُنهي هو المكالمة بـ"لا يوجد رد" رغم أن الطرف الآخر ردّ عليها
+      // فعليًا. الآن: إعادة محاولة، وإن فشلت نهائيًا، إنهاء واضح فورًا بدل
+      // الانتظار الصامت.
+      final delivered = await _sendSignalWithRetry(
+        call.peerInternalNumber,
+        {
+          'type': 'call_answer',
+          'id': call.callId,
+          'senderInternalNumber': _localInternalNumber(),
+          'sdp': answer.sdp,
+        },
+        label: 'call_answer',
+      );
+      if (!delivered) {
+        _logDiagnostic('فشل إيصال call_answer نهائيًا — إنهاء المكالمة فورًا بدل الانتظار الصامت');
+        await _endCall(reason: 'تعذّر إبلاغ الطرف الآخر بالقبول — تحقّق من الاتصال بالإنترنت', notifyPeer: false);
+        return;
+      }
+      _logDiagnostic('وصل call_answer — بانتظار اكتمال اتصال ICE/WebRTC');
     } catch (error) {
+      _logDiagnostic('استثناء أثناء قبول المكالمة: $error');
       await _endCall(reason: 'تعذّر قبول المكالمة: $error');
     }
   }
@@ -316,6 +396,7 @@ class CallService extends ChangeNotifier {
     final pc = _pc;
     final sdp = payload['sdp'];
     if (call == null || pc == null || sdp is! String || payload['id'] != call.callId) return;
+    _logDiagnostic('وصل call_answer — الطرف الآخر قبِل فعليًا، جارٍ تفاوض ICE/WebRTC');
     _cancelRingTimeout();
     unawaited(_sound.stopRingback());
     call.state = CallState.connecting;
@@ -329,6 +410,7 @@ class CallService extends ChangeNotifier {
     final call = currentCall;
     final candidate = payload['candidate'];
     if (call == null || _pc == null || payload['id'] != call.callId || candidate is! String) return;
+    _logDiagnostic('مرشّح ICE وارد من الطرف الآخر: ${_candidateType(candidate)}');
 
     final iceCandidate = RTCIceCandidate(
       candidate,
@@ -611,19 +693,58 @@ class CallService extends ChangeNotifier {
     unawaited(Helper.setSpeakerphoneOn(isSpeakerOn));
   }
 
+  RTCPeerConnectionState? _lastConnectionState;
+  Timer? _reconnectGraceTimer;
+
+  /// نوع مرشّح ICE من نص SDP الخام — "host" (شبكة محلية مباشرة)، "srflx"
+  /// (عنوان عام مكتشَف عبر STUN)، أو "relay" (عبر خادم TURN، آخر بديل).
+  /// يظهر في سجل التشخيص ليُعرَف بوضوح هل الاتصال مباشر أم عبر TURN —
+  /// مطلوب صراحة لتشخيص أعطال بيانات الجوال/CGNAT.
+  String _candidateType(String? candidateLine) {
+    if (candidateLine == null) return 'unknown';
+    return RegExp(r' typ (\w+)').firstMatch(candidateLine)?.group(1) ?? 'unknown';
+  }
+
+  /// يرسل إشارة مكالمة مع إعادة محاولة قصيرة عند الفشل — كانت كل إشارات
+  /// المكالمة (العرض، الرد، مرشّحات ICE) "أرسل ونسَ" بلا أي إعادة محاولة.
+  /// هذا خطير خصوصًا لإشارة "call_answer": لو فشل إيصالها للمُتصِل الأصلي
+  /// (شائع عبر المُرحِّل على شبكتين مختلفتين)، يبقى الطرف القابِل عالقًا في
+  /// "جارٍ الاتصال..." بصمت حتى تنتهي مهلة رنين المُتصِل (45 ثانية) فيُنهي
+  /// هو المكالمة بسبب "لا يوجد رد" — رغم أن الطرف الآخر ردّ عليها فعليًا.
+  /// يُستخدَم أيضًا لمرشّحات ICE، حيث فقدان مرشّح واحد فقط (خصوصًا مرشّح
+  /// TURN، غالبًا الوحيد القابل للعمل خلف CGNAT) على شبكة جوال متذبذبة قد
+  /// يمنع نجاح الاتصال بالكامل رغم وجود مسار صالح نظريًا.
+  Future<bool> _sendSignalWithRetry(String peer, Map<String, dynamic> payload, {String label = ''}) async {
+    for (var attempt = 1; attempt <= 3; attempt++) {
+      if (await _sendSignal(peer, payload)) {
+        if (attempt > 1) _logDiagnostic('$label: نجح الإرسال بعد إعادة المحاولة رقم $attempt');
+        return true;
+      }
+      await Future<void>.delayed(Duration(milliseconds: 400 * attempt));
+    }
+    _logDiagnostic('$label: فشل الإرسال بعد 3 محاولات');
+    return false;
+  }
+
   void _wirePeerConnectionCallbacks() {
     final pc = _pc!;
     final call = currentCall!;
+    _lastConnectionState = null;
     pc.onIceCandidate = (candidate) {
       if (candidate.candidate == null) return;
-      unawaited(_sendSignal(call.peerInternalNumber, {
-        'type': 'call_ice_candidate',
-        'id': call.callId,
-        'senderInternalNumber': _localInternalNumber(),
-        'candidate': candidate.candidate,
-        'sdpMid': candidate.sdpMid,
-        'sdpMLineIndex': candidate.sdpMLineIndex,
-      }));
+      _logDiagnostic('مرشّح ICE محلي: ${_candidateType(candidate.candidate)}');
+      unawaited(_sendSignalWithRetry(
+        call.peerInternalNumber,
+        {
+          'type': 'call_ice_candidate',
+          'id': call.callId,
+          'senderInternalNumber': _localInternalNumber(),
+          'candidate': candidate.candidate,
+          'sdpMid': candidate.sdpMid,
+          'sdpMLineIndex': candidate.sdpMLineIndex,
+        },
+        label: 'مرشّح ICE (${_candidateType(candidate.candidate)})',
+      ));
     };
     pc.onTrack = (event) {
       if (event.streams.isNotEmpty) {
@@ -631,8 +752,14 @@ class CallService extends ChangeNotifier {
         _safeNotify();
       }
     };
+    pc.onIceGatheringState = (state) => _logDiagnostic('حالة تجميع ICE: ${state.name}');
+    pc.onIceConnectionState = (state) => _logDiagnostic('حالة اتصال ICE: ${state.name}');
+    pc.onSignalingState = (state) => _logDiagnostic('حالة التفاوض (signaling): ${state.name}');
     pc.onConnectionState = (state) {
+      _lastConnectionState = state;
+      _logDiagnostic('حالة الاتصال الكلية: ${state.name}');
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+        _reconnectGraceTimer?.cancel();
         if (call.state != CallState.active) {
           call.state = CallState.active;
           call.connectedAt = DateTime.now();
@@ -640,9 +767,29 @@ class CallService extends ChangeNotifier {
         }
       } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected) {
-        unawaited(_endCall(reason: 'انقطع الاتصال', notifyPeer: false));
+        _handleConnectionTrouble(call, pc);
       }
     };
+  }
+
+  /// انقطاع مؤقت (تذبذب شبكة، تبديل Wi-Fi↔بيانات الجوال) لا يجب أن يُنهي
+  /// المكالمة فورًا — يحاول استعادة الاتصال عبر ICE restart أولًا، ويمهل
+  /// الاتصال 15 ثانية للعودة قبل إنهاء المكالمة فعليًا إن لم ينجح.
+  void _handleConnectionTrouble(CallSession call, RTCPeerConnection pc) {
+    if (currentCall != call) return;
+    _logDiagnostic('انقطاع اتصال — محاولة استعادة (ICE restart)...');
+    try {
+      pc.restartIce();
+    } catch (error) {
+      _logDiagnostic('restartIce فشل أو غير مدعوم: $error');
+    }
+    _reconnectGraceTimer?.cancel();
+    _reconnectGraceTimer = Timer(const Duration(seconds: 15), () {
+      if (currentCall == call && _lastConnectionState != RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+        _logDiagnostic('تعذّرت استعادة الاتصال خلال 15 ثانية — إنهاء المكالمة');
+        unawaited(_endCall(reason: 'انقطع الاتصال', notifyPeer: false));
+      }
+    });
   }
 
   void _startRingTimeout() {
@@ -674,6 +821,7 @@ class CallService extends ChangeNotifier {
         call.state == CallState.ringing;
     _cancelRingTimeout();
     _cancelVideoUpgradeTimeout();
+    _reconnectGraceTimer?.cancel();
     unawaited(_sound.stopRingtone());
     unawaited(_sound.stopRingback());
     unawaited(_sound.cancelIncomingCallNotification());
@@ -747,6 +895,7 @@ class CallService extends ChangeNotifier {
     _ringTimer?.cancel();
     _clearTimer?.cancel();
     _videoUpgradeTimer?.cancel();
+    _reconnectGraceTimer?.cancel();
     unawaited(_teardownMedia());
     unawaited(localRenderer.dispose());
     unawaited(remoteRenderer.dispose());

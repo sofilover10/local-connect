@@ -61,6 +61,7 @@ class GroupCallService extends ChangeNotifier {
           'turn:openrelay.metered.ca:80',
           'turn:openrelay.metered.ca:443',
           'turn:openrelay.metered.ca:443?transport=tcp',
+          'turns:openrelay.metered.ca:443?transport=tcp',
         ],
         'username': 'openrelayproject',
         'credential': 'openrelayproject',

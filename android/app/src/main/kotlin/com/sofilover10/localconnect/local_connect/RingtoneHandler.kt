@@ -1,5 +1,6 @@
 package com.sofilover10.localconnect.local_connect
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -92,6 +93,10 @@ class RingtoneHandler(private val context: Context) : MethodChannel.MethodCallHa
                 "مكالمات واردة",
                 NotificationManager.IMPORTANCE_HIGH,
             )
+            // بدون هذا صراحةً، بعض تطبيقات أندرويد المخصَّصة (خصوصًا سامسونج
+            // One UI) قد تُخفي محتوى الإشعار — وبالتبعية سلوك الشاشة الكاملة
+            // المرتبط به — عن شاشة القفل رغم أن باقي الإعدادات صحيحة.
+            channel.lockscreenVisibility = Notification.VISIBILITY_PUBLIC
             manager.createNotificationChannel(channel)
         }
 
@@ -128,6 +133,7 @@ class RingtoneHandler(private val context: Context) : MethodChannel.MethodCallHa
             .setSmallIcon(android.R.drawable.sym_call_incoming)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setFullScreenIntent(fullScreenPendingIntent, true)
             .setContentIntent(fullScreenPendingIntent)
             .addAction(android.R.drawable.sym_action_call, "رد", answerPendingIntent)

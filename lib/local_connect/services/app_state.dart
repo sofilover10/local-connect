@@ -108,6 +108,7 @@ class LocalConnectAppState extends ChangeNotifier with WidgetsBindingObserver {
     localDisplayName: () => identity.displayName,
     contactDisplayNameFor: _contactDisplayNameFor,
     onMissedCall: _recordMissedCall,
+    onCallDiagnostic: (message) => recordError('مكالمة', message),
   );
 
   /// مكالمات صوتية جماعية (mesh) — نفس فكرة [callService] لكن لعدة أطراف؛

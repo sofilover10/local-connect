@@ -422,7 +422,16 @@ extension MessagingExtension on LocalConnectAppState {
   /// ثوانٍ ثابتة للاتصال والمعالجة.
   Duration _deliveryTimeoutFor(Map<String, dynamic> payload) {
     final data = payload['data'] ?? payload['dataEnc'];
-    if (data is! String || data.length < 200 * 1024) return const Duration(seconds: 3);
+    if (data is! String || data.length < 200 * 1024) {
+      // إشارات المكالمات (عرض/رد SDP، مرشّحات ICE) صغيرة الحجم لكنها حسّاسة
+      // للـlatency لا العرض النطاقي — 3 ثوانٍ (المهلة الافتراضية للرسائل
+      // العادية) قصيرة جدًا على شبكة جوال بطيئة أو عبر المُرحِّل المركزي
+      // (اتصال جديد + جولة ذهاب-إياب كاملة)، فكانت تفشل بصمت رغم أن
+      // الحمولة كانت لتصل لو أُمهلت وقتًا كافيًا أكثر بقليل.
+      final type = payload['type'] as String?;
+      if (type != null && type.startsWith('call_')) return const Duration(seconds: 10);
+      return const Duration(seconds: 3);
+    }
     final estimatedSeconds = 5 + (data.length / (2 * 1024 * 1024)).ceil();
     return Duration(seconds: estimatedSeconds.clamp(3, 180));
   }
