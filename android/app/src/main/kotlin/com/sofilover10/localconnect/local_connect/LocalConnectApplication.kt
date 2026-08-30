@@ -1,6 +1,8 @@
 package com.sofilover10.localconnect.local_connect
 
 import android.app.Application
+import android.content.Context
+import android.net.wifi.WifiManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.embedding.engine.dart.DartExecutor
@@ -32,6 +34,23 @@ class LocalConnectApplication : Application() {
         // حتى يلتقط أعطالًا قد تحدث أثناء تهيئة محرّك Flutter نفسه أو أي من
         // المعالِجات أدناه، لا فقط بعد اكتمال الإقلاع.
         CrashReporter.install(this)
+
+        // بدون هذا، تُسقِط تشغيلات Wi-Fi كثيرة (تختلف حسب الجهاز/الراوتر)
+        // حزم بث UDP الواردة صامتًا على مستوى تعريف الشبكة نفسه توفيرًا
+        // للطاقة — رغم أن إرسال البث وربط المقبس (RawDatagramSocket) ينجحان
+        // ظاهريًا بلا أي خطأ. هذا هو السبب الأرجح وراء تفاوت اكتشاف الأجهزة
+        // بين شبكة وأخرى رغم اتصال الجهازين بنفس الشبكة تمامًا. يُمسَك طوال
+        // عمر العملية (لا حاجة لتحريره صراحة؛ خدمة الخلفية الدائمة تعني أن
+        // العملية لا تُغلَق أصلًا في الاستخدام العادي).
+        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        try {
+            wifiManager?.createMulticastLock("mada_lan_discovery")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        } catch (_: Throwable) {
+            // لا شيء — تحسين لموثوقية الاكتشاف، ليس شرطًا لعمل بقية التطبيق.
+        }
 
         val engine = FlutterEngine(this)
         // تسجيل الإضافات (path_provider، permission_handler، flutter_webrtc...)
