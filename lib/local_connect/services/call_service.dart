@@ -417,6 +417,25 @@ class CallService extends ChangeNotifier {
         call.mediaType != CallMediaType.audio) {
       return;
     }
+
+    if (call.pendingOutgoingVideoUpgrade) {
+      // كلا الطرفين طلب التحويل تقريبًا بنفس اللحظة (glare) — بما أن كليهما
+      // أراد الفيديو أصلًا، نُعامِل هذا كموافقة متبادلة تلقائية بدل إظهار
+      // طلبين منفصلين قد يتجاهلهما الطرفان أو يتعارضان (كلا الجهازين
+      // بانتظار رد الآخر إلى الأبد — بالضبط ما أُبلِغ عنه). لتفادي تعارض
+      // SDP (كلا الطرفين يُنشئ عرضًا بنفس اللحظة)، يُحدَّد الطرف الذي يُكمل
+      // التفاوض فعليًا حتميًا عبر مقارنة الرقمين الداخليين — كلا الجهازين
+      // يصل لنفس القرار محليًا بلا حاجة لتبادل رسالة إضافية.
+      _cancelVideoUpgradeTimeout();
+      call.pendingOutgoingVideoUpgrade = false;
+      if (_localInternalNumber().compareTo(call.peerInternalNumber) < 0) {
+        await _beginVideoUpgradeOffer(call);
+      }
+      // وإلا: الطرف الآخر هو من يُكمل بإرسال عرضه (call_renegotiate_offer)،
+      // الذي سيصل ويُعالَج في _handleRenegotiateOffer عادةً.
+      return;
+    }
+
     call.pendingIncomingVideoUpgrade = true;
     _safeNotify();
   }
@@ -442,8 +461,7 @@ class CallService extends ChangeNotifier {
 
   Future<void> _handleVideoUpgradeResponse(Map<String, dynamic> payload) async {
     final call = currentCall;
-    final pc = _pc;
-    if (call == null || pc == null || payload['id'] != call.callId || !call.pendingOutgoingVideoUpgrade) {
+    if (call == null || payload['id'] != call.callId || !call.pendingOutgoingVideoUpgrade) {
       return;
     }
     _cancelVideoUpgradeTimeout();
@@ -452,6 +470,16 @@ class CallService extends ChangeNotifier {
       _safeNotify();
       return;
     }
+    await _beginVideoUpgradeOffer(call);
+  }
+
+  /// يفتح كاميرا هذا الجهاز ويُنشئ عرض SDP جديدًا (renegotiation) على نفس
+  /// اتصال WebRTC القائم فعليًا، بعد التأكد من موافقة الطرف الآخر (أو حسم
+  /// حالة طلب متزامن — راجع _handleVideoUpgradeRequest). مُستخرَجة كدالة
+  /// مشتركة حتى لا يتكرر نفس منطق فتح الكاميرا/التفاوض في كلا المسارين.
+  Future<void> _beginVideoUpgradeOffer(CallSession call) async {
+    final pc = _pc;
+    if (pc == null) return;
     try {
       final videoStream = await navigator.mediaDevices.getUserMedia({
         'audio': false,

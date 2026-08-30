@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -90,6 +92,15 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
                     ),
                     title: Text(check.label),
                     subtitle: Text(check.detail),
+                    trailing: check.onFix == null
+                        ? null
+                        : TextButton(
+                            onPressed: () async {
+                              await check.onFix!();
+                              if (mounted) unawaited(_runChecks());
+                            },
+                            child: const Text('إصلاح'),
+                          ),
                   ),
                 const Divider(),
                 Padding(

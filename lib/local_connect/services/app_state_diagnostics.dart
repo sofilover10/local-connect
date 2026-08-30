@@ -83,6 +83,11 @@ extension DiagnosticsExtension on LocalConnectAppState {
           ? 'مُمنوحة — الإشعارات تعمل بشكل طبيعي'
           : 'غير مُمنوحة — لن تظهر أي إشعارات (رسائل، مكالمات واردة) إطلاقًا. '
               'امنحها من إعدادات النظام: التطبيقات ← LocalConnect ← الإشعارات.',
+      onFix: notificationStatus.isGranted
+          ? null
+          : () async {
+              await Permission.notification.request();
+            },
     ));
 
     // بدونها (أندرويد 14+)، إشعار المكالمة الواردة يُخفَّض بصمت لإشعار عادي
@@ -97,8 +102,9 @@ extension DiagnosticsExtension on LocalConnectAppState {
           ? 'مُمنوحة — شاشة المكالمة تظهر تلقائيًا فوق شاشة القفل'
           : 'غير مُمنوحة — عند ورود مكالمة سيُسمَع الرنين فقط بلا ظهور شاشة '
               'المكالمة تلقائيًا (زرّا الرد/الرفض يبقيان متاحَين عبر الإشعار '
-              'نفسه). امنحها من: إعدادات النظام ← التطبيقات ← مدى ← إشعارات '
-              'بالشاشة الكاملة.',
+              'نفسه). اضغط هنا لفتح شاشة الإعدادات المخصَّصة لهذه الصلاحية '
+              'مباشرة.',
+      onFix: fullScreenIntentGranted ? null : callService.ensureFullScreenIntentPermission,
     ));
 
     // بدون هذا الاستثناء، بعض الأجهزة (خصوصًا سامسونج One UI) تضع التطبيق
@@ -115,8 +121,12 @@ extension DiagnosticsExtension on LocalConnectAppState {
           ? 'مُمنوح — التطبيق مستثنى من إجراءات توفير البطارية العدوانية'
           : 'غير مُمنوح — قد يضع النظام التطبيق في وضع سكون بعد فترة خمول '
               'طويلة، فيتوقف استقبال الرسائل والمكالمات ويظهر جهازك "غير '
-              'متصل" لدى الآخرين. امنحه من: إعدادات النظام ← التطبيقات ← '
-              'مدى ← البطارية ← "بلا قيود" أو ما يعادلها.',
+              'متصل" لدى الآخرين. اضغط هنا لطلبه مباشرة.',
+      onFix: batteryStatus.isGranted
+          ? null
+          : () async {
+              await Permission.ignoreBatteryOptimizations.request();
+            },
     ));
 
     final pendingCount = _messagesByConversation.values.expand((m) => m).where(

@@ -106,9 +106,20 @@ extension IncomingWireExtension on LocalConnectAppState {
         case 'call_ice_candidate':
         case 'call_reject':
         case 'call_end':
+        case 'call_video_upgrade_request':
+        case 'call_video_upgrade_response':
+        case 'call_renegotiate_offer':
+        case 'call_renegotiate_answer':
           // إشارات المكالمات لا تُخزَّن كرسائل محادثة — تُمرَّر مباشرة إلى
           // خدمة المكالمات المناسبة. وجود groupId يميّز إشارة اتصال WebRTC
           // مباشر بين عضوين ضمن مكالمة جماعية عن مكالمة ثنائية عادية.
+          //
+          // ملاحظة مهمة: أنواع التحويل لفيديو (video_upgrade_*/renegotiate_*)
+          // لم تكن مُدرَجة هنا سابقًا، فكانت تسقط في default أدناه وتُعامَل
+          // كرسالة محادثة عادية — بما أنها بلا حقل 'text'، كانت
+          // _handleIncomingNewMessage ترفضها بصمت (recordError فقط) قبل أن
+          // تصل لـ CallService.handleSignal إطلاقًا. هذا هو السبب الجذري
+          // الفعلي لعدم وصول طلب التحويل للطرف الآخر أبدًا.
           if (groupId is String) {
             unawaited(groupCallService.handleSignal(payload));
           } else {
