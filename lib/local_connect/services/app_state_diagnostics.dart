@@ -64,12 +64,22 @@ extension DiagnosticsExtension on LocalConnectAppState {
       checks.add(DiagnosticCheck(label: 'واجهات الشبكة المحلية', ok: false, detail: 'تعذر القراءة: $error'));
     }
 
+    // فحص مرحلي فعلي لمسار الإنترنت إلى المُرحِّل (DNS ← HTTPS ← WebSocket)
+    // بدل مجرد عرض "متصل/غير متصل" — على بيانات الجوال تحديدًا قد يعمل
+    // الإنترنت في تطبيقات أخرى بينما يتوقف مسارنا عند مرحلة معيّنة (DNS
+    // معطوب، TLS محجوب، قناة ميّتة بعد تبديل الشبكة)، وهذا الفحص يُظهر
+    // أيّ مرحلة بالضبط.
+    final probeStages = await relay.probePath();
+    for (final stage in probeStages) {
+      checks.add(DiagnosticCheck(label: 'مسار الإنترنت: ${stage.stage}', ok: stage.ok, detail: stage.detail));
+    }
     checks.add(DiagnosticCheck(
       label: 'المُرحِّل المركزي (اختياري، عبر الإنترنت)',
       ok: relay.isConnected,
       detail: relay.isConnected
           ? 'متصل — يعمل كخطة بديلة أخيرة إذا تعذّر الوصول المباشر'
           : (relay.lastError ?? 'غير متصل حاليًا (طبيعي بلا إنترنت؛ يعيد المحاولة تلقائيًا)'),
+      onFix: relay.isConnected ? null : () async => relay.ensureConnected(),
     ));
 
     // بدون هذه الصلاحية (أندرويد 13+)، كل الإشعارات (رسائل، مكالمات واردة،
@@ -127,6 +137,37 @@ extension DiagnosticsExtension on LocalConnectAppState {
           : () async {
               await Permission.ignoreBatteryOptimizations.request();
             },
+    ));
+
+    // مسابير الوصول الفعلي لخوادم WebRTC (STUN/TURN) — وجود عناوينها في
+    // الإعداد لا يثبت عملها؛ هذه المسابير تُثبته بحزم حقيقية من هذه الشبكة
+    // بالذات. فشل UDP مع نجاح TLS/443 مثلًا يفسّر مسبقًا لماذا ستفشل
+    // المكالمة المباشرة على هذه الشبكة وتنجح فقط عبر الترحيل.
+    final probe = NetProbeService();
+    const turnHost = 'openrelay.metered.ca';
+    final stunResult = await probe.stunProbe('stun.l.google.com', 19302);
+    checks.add(DiagnosticCheck(
+      label: 'STUN (اكتشاف العنوان العام عبر UDP)',
+      ok: stunResult.ok,
+      detail: stunResult.detail,
+    ));
+    final turnUdp = await probe.turnUdpProbe(turnHost, 80);
+    checks.add(DiagnosticCheck(
+      label: 'TURN عبر UDP (:80)',
+      ok: turnUdp.ok,
+      detail: turnUdp.detail,
+    ));
+    final turnTcp = await probe.turnTcpProbe(turnHost, 443);
+    checks.add(DiagnosticCheck(
+      label: 'TURN عبر TCP (:443)',
+      ok: turnTcp.ok,
+      detail: turnTcp.detail,
+    ));
+    final turnTls = await probe.turnTlsProbe(turnHost, 443);
+    checks.add(DiagnosticCheck(
+      label: 'TURN عبر TLS (:443) — المسار الأخير خلف CGNAT',
+      ok: turnTls.ok,
+      detail: turnTls.detail,
     ));
 
     final pendingCount = _messagesByConversation.values.expand((m) => m).where(

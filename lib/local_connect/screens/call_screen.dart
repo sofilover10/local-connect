@@ -90,6 +90,8 @@ class _CallScreenState extends State<CallScreen> {
         return call.mediaType == CallMediaType.video ? 'مكالمة فيديو واردة' : 'مكالمة صوتية واردة';
       case CallState.connecting:
         return 'جارٍ الاتصال...';
+      case CallState.reconnecting:
+        return 'جارٍ إعادة الاتصال...';
       case CallState.active:
         if (call.pendingOutgoingVideoUpgrade) return 'بانتظار موافقة الطرف الآخر على الفيديو...';
         return _formatDuration(call.elapsed);
@@ -104,9 +106,13 @@ class _CallScreenState extends State<CallScreen> {
     final callService = widget.callService;
     _syncVibration(call);
 
-    final showRemoteVideo = call.mediaType == CallMediaType.video && call.state == CallState.active;
+    // أثناء إعادة الاتصال تُعامَل كالحالة النشطة في العرض (يبقى الفيديو
+    // الأخير ظاهرًا بدل وميض للشعار) — النص وحده يتغير لـ«جاري إعادة
+    // الاتصال…».
+    final ongoing = call.state == CallState.active || call.state == CallState.reconnecting;
+    final showRemoteVideo = call.mediaType == CallMediaType.video && ongoing;
     final showLocalPreview = call.mediaType == CallMediaType.video &&
-        (call.state == CallState.connecting || call.state == CallState.active) &&
+        (call.state == CallState.connecting || ongoing) &&
         !callService.isCameraOff;
 
     return PopScope(

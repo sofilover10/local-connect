@@ -154,6 +154,10 @@ class GroupCallService extends ChangeNotifier {
         'mediaType': mediaType.name,
         'callerDisplayName': _localDisplayName(),
         'senderInternalNumber': _localInternalNumber(),
+        // ختم زمني — نفس سبب وجوده في call_offer الثنائية: المُرحِّل يخزّن
+        // الحمولات ويسلّمها متأخرة عند عودة الاتصال، والدعوة القديمة يجب
+        // ألا تُرنّ لمكالمة جماعية انتهت أصلًا (راجع _handleInvite).
+        'sentAt': DateTime.now().toIso8601String(),
       }));
     }
 
@@ -239,6 +243,18 @@ class GroupCallService extends ChangeNotifier {
     final senderInternalNumber = payload['senderInternalNumber'];
     if (groupId is! String || callId is! String || groupName is! String || senderInternalNumber is! String) {
       return;
+    }
+
+    // رفض الدعوات القديمة المخزَّنة لدى المُرحِّل والمُسلَّمة متأخرًا (عند
+    // عودة الاتصال بالإنترنت/Wi-Fi مثلًا) — نفس منطق رفض call_offer القديمة
+    // في CallService، وإلا رنّ الجهاز لمكالمة جماعية منتهية أصلًا.
+    final sentAtRaw = payload['sentAt'];
+    if (sentAtRaw is String) {
+      final sentAt = DateTime.tryParse(sentAtRaw);
+      final age = sentAt == null ? null : DateTime.now().difference(sentAt);
+      if (age != null && age > const Duration(seconds: 60)) {
+        return;
+      }
     }
 
     if (currentCall != null) {

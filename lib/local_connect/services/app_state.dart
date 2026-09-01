@@ -29,6 +29,7 @@ import 'lan_discovery_service.dart';
 import 'local_store_service.dart';
 import 'message_notification_service.dart';
 import 'messaging_socket_service.dart';
+import 'net_probe_service.dart';
 import 'phone_contacts_service.dart';
 import 'relay_service.dart';
 import 'update_check_service.dart';
@@ -262,6 +263,13 @@ class LocalConnectAppState extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     discovery.setBackgroundMode(state != AppLifecycleState.resumed);
+    if (state == AppLifecycleState.resumed) {
+      // العودة للمقدمة لحظة مناسبة للحاق بأي انقطاع حدث في الخلفية (تبديل
+      // شبكة، قتل النظام للمقابس الخاملة): أعد وصل قناة المُرحِّل فورًا
+      // وأرسل أي رسائل معلّقة تراكمت أثناء الغياب.
+      relay.ensureConnected();
+      unawaited(_retryQueuedMessages());
+    }
   }
 
   /// فحص غير حاجب لوجود إصدار أحدث على GitHub Releases. يفشل بصمت بلا

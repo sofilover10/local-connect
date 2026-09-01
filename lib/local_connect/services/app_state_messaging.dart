@@ -444,6 +444,11 @@ extension MessagingExtension on LocalConnectAppState {
   }
 
   Future<void> _retryQueuedMessages() async {
+    // أي محاولة تسليم عبر المُرحِّل ستفشل بصمت إن كانت قناته مقطوعة —
+    // ابدأ إعادة الاتصال فورًا (لا-عملية إن كانت متصلة أصلًا) حتى يُلتقط
+    // عودة الإنترنت أو تبديل الشبكة عند أول دورة إعادة محاولة، بدل بقاء
+    // الطابور عالقًا حتى انتهاء backoff طويل.
+    relay.ensureConnected();
     for (final entry in _messagesByConversation.entries) {
       for (final message in entry.value) {
         if (message.outgoing &&

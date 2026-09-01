@@ -5,8 +5,11 @@ enum CallMediaType { audio, video }
 
 /// دورة حياة المكالمة:
 /// ringing → connecting (بعد قبولها، قبل اكتمال تفاوض WebRTC) → active
-/// (صوت/فيديو يتدفّق فعليًا) → ended.
-enum CallState { ringing, connecting, active, ended }
+/// (صوت/فيديو يتدفّق فعليًا) → ended. ومن active قد تنتقل مؤقتًا إلى
+/// reconnecting عند انقطاع/تبديل الشبكة أثناء مكالمة قائمة (تُعرَض
+/// «جاري إعادة الاتصال…»)، ثم تعود لـactive عند نجاح ICE restart أو
+/// تنتهي بعد استنفاد مهلة الاستعادة.
+enum CallState { ringing, connecting, active, reconnecting, ended }
 
 /// حالة مكالمة واحدة جارية أو منتهية للتوّ — تُعرَض في الواجهة عبر
 /// [CallService.currentCall].

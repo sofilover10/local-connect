@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../app_scope.dart';
@@ -54,6 +55,32 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
     });
   }
 
+  /// يبني تقرير تشخيص نصيًا قابلًا للمشاركة (للمطوّر/الاختبار الميداني) —
+  /// نتائج الفحوص + سجل الأخطاء الأخير + الإصدار. لا يتضمن أي محتوى رسائل
+  /// أو مفاتيح أو بيانات اعتماد؛ السجل أصلًا أحداث تقنية فقط (حالات اتصال
+  /// وأسباب فشل)، وعناوين IP العامة الظاهرة فيه معلومة تشخيصية يشاركها
+  /// المستخدم بمحض إرادته عند لصق التقرير وإرساله لمن يثق به.
+  Future<void> _copyReport(BuildContext context) async {
+    final appState = AppScope.of(context);
+    final buffer = StringBuffer()
+      ..writeln('تقرير تشخيص مدى — $_versionLabel')
+      ..writeln('الوقت: ${DateTime.now().toIso8601String()}')
+      ..writeln('--- الفحوص ---');
+    for (final check in _checks ?? const <DiagnosticCheck>[]) {
+      buffer.writeln('${check.ok ? "✓" : "✗"} ${check.label}: ${check.detail}');
+    }
+    buffer.writeln('--- سجل الأخطاء الأخيرة (${appState.errorLog.length}) ---');
+    for (final entry in appState.errorLog) {
+      buffer.writeln(entry);
+    }
+    await Clipboard.setData(ClipboardData(text: buffer.toString()));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('نُسخ تقرير التشخيص — الصقه حيث تريد مشاركته')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final appState = AppScope.of(context);
@@ -70,6 +97,11 @@ class _DiagnosticsScreenState extends State<DiagnosticsScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            onPressed: _checks == null ? null : () => _copyReport(context),
+            icon: const Icon(Icons.copy),
+            tooltip: 'نسخ تقرير التشخيص',
+          ),
           IconButton(
             onPressed: _running ? null : _runChecks,
             icon: const Icon(Icons.refresh),

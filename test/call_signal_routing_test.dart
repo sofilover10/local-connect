@@ -71,4 +71,54 @@ void main() {
       );
     }
   }, timeout: const Timeout(Duration(seconds: 40)));
+
+  test('عرض مكالمة قديم (مخزَّن لدى المُرحِّل) يُرفَض ولا يُشغِّل رنينًا وهميًا', () async {
+    final deviceA = LocalConnectAppState(instanceId: 'stale_offer_a');
+    final deviceB = LocalConnectAppState(instanceId: 'stale_offer_b');
+    await deviceA.init();
+    await deviceB.init();
+    addTearDown(() {
+      deviceA.dispose();
+      deviceB.dispose();
+    });
+
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
+    while (DateTime.now().isBefore(deadline)) {
+      if (deviceA.discovery.peerByInternalNumber(deviceB.identity.internalNumber) != null) break;
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    }
+    final peerB = deviceA.discovery.peerByInternalNumber(deviceB.identity.internalNumber);
+    expect(peerB, isNotNull, reason: 'يجب أن يكتشف الجهاز A الجهاز B عبر الشبكة المحلية أولًا');
+
+    // يحاكي عرضًا أُرسل قبل 5 دقائق وخزّنه المُرحِّل ثم سلّمه متأخرًا عند
+    // عودة الاتصال — كان سابقًا يُرنّ الجهاز لمكالمة ميّتة وتُسجَّل كمكالمة
+    // فائتة وهمية.
+    final delivered = await deviceA.socket.sendDirect(
+      address: peerB!.address,
+      port: peerB.tcpPort,
+      payload: {
+        'type': 'call_offer',
+        'id': 'stale-call-id',
+        'senderInternalNumber': deviceA.identity.internalNumber,
+        'callerDisplayName': 'قديم',
+        'mediaType': 'audio',
+        'sdp': 'v=0',
+        'sentAt': DateTime.now().subtract(const Duration(minutes: 5)).toIso8601String(),
+      },
+    );
+    expect(delivered, isTrue, reason: 'يجب أن تصل الحمولة نفسها عبر الشبكة');
+
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+
+    expect(
+      deviceB.callService.currentCall,
+      isNull,
+      reason: 'عرض أقدم من مهلة الرنين يجب ألا يُنشئ مكالمة واردة إطلاقًا',
+    );
+    expect(
+      deviceB.errorLog.any((e) => e.contains('تجاهُل call_offer قديم')),
+      isTrue,
+      reason: 'يجب أن يُسجَّل سبب التجاهل في السجل التشخيصي',
+    );
+  }, timeout: const Timeout(Duration(seconds: 40)));
 }
